@@ -7,7 +7,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::i18n::{t, t1, t2};
-use crate::output::{print_json, OutputMode};
+use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 use tokio::net::TcpStream;
@@ -47,13 +47,14 @@ pub struct ScanOutput {
 /// 执行端口扫描并输出结果
 pub async fn run(host: &str, ports: Option<&[u16]>, mode: OutputMode) {
     // 解析主机
-    let target = match resolve_host(host).await {
+    let target = match crate::util::resolve_host(host).await {
         Some(ip) => ip,
         None => {
+            let msg = t1("scan.resolve_fail", host);
             if mode == OutputMode::Json {
-                println!("{{\"error\": \"{}\"}}", t1("scan.resolve_fail", host));
+                print_json_error(&msg);
             } else {
-                println!("  {}", t1("scan.resolve_fail", host).red());
+                println!("  {}", msg.red());
             }
             return;
         }
@@ -154,21 +155,5 @@ async fn scan_port(target: IpAddr, port: u16) -> PortResult {
         port,
         open,
         service: service.to_string(),
-    }
-}
-
-/// 解析主机名为 IP 地址
-async fn resolve_host(host: &str) -> Option<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
-    }
-
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::TokioAsyncResolver;
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match resolver.lookup_ip(host).await {
-        Ok(ips) => ips.iter().next(),
-        Err(_) => None,
     }
 }

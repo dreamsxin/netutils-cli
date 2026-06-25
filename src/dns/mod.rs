@@ -4,7 +4,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::i18n::t;
-use crate::output::{print_json, OutputMode};
+use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 use trust_dns_resolver::config::*;
@@ -110,10 +110,11 @@ pub async fn run(domain: &str, record_type: DnsRecordType, mode: OutputMode) {
             println!("  {}", t("dns.elapsed").replace("{0}", &format!("{:.2}", output.elapsed_ms)));
         }
         Err(e) => {
+            let msg = t("dns.fail").replace("{0}", &e);
             if mode == OutputMode::Json {
-                println!("{{\"error\": \"{}\"}}", e);
+                print_json_error(&msg);
             } else {
-                println!("  {}", t("dns.fail").replace("{0}", &e).red());
+                println!("  {}", msg.red());
             }
         }
     }

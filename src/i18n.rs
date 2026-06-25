@@ -3,6 +3,7 @@
 //! 优先级：`--lang` 参数 > `NETUTILS_LANG` 环境变量 > 系统自动检测。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use once_cell::sync::Lazy;
 
@@ -14,25 +15,39 @@ pub enum Lang {
     En,
 }
 
-/// 全局语言设置，运行时可通过 `set_lang()` 覆盖
-static mut LANG: Lang = Lang::Zh;
-static mut INITIALIZED: bool = false;
+impl Lang {
+    fn as_u8(self) -> u8 {
+        match self {
+            Lang::Zh => 0,
+            Lang::En => 1,
+        }
+    }
+
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Lang::Zh,
+            _ => Lang::En,
+        }
+    }
+}
+
+/// 全局语言设置（线程安全，无 unsafe）
+static LANG: AtomicU8 = AtomicU8::new(0); // 默认 Zh，init() 会覆盖
+static INITIALIZED: AtomicU8 = AtomicU8::new(0); // 0=未初始化, 1=已初始化
 
 /// 初始化语言（从 --lang 参数或环境变量）
 pub fn init(lang: Option<Lang>) {
     let detected = lang.unwrap_or_else(detect);
-    unsafe {
-        LANG = detected;
-        INITIALIZED = true;
-    }
+    LANG.store(detected.as_u8(), Ordering::Relaxed);
+    INITIALIZED.store(1, Ordering::Relaxed);
 }
 
 /// 获取当前语言
 pub fn current() -> Lang {
-    if unsafe { !INITIALIZED } {
+    if INITIALIZED.load(Ordering::Relaxed) == 0 {
         init(None);
     }
-    unsafe { LANG }
+    Lang::from_u8(LANG.load(Ordering::Relaxed))
 }
 
 /// 自动检测系统语言
@@ -56,7 +71,7 @@ pub fn detect() -> Lang {
         }
     }
 
-    // 3. Windows: 通过 GetACP 检测
+    // 3. Windows: 通过 locale ID 检测
     #[cfg(target_os = "windows")]
     {
         if is_chinese_windows() {
@@ -74,23 +89,16 @@ pub fn detect() -> Lang {
 
 #[cfg(target_os = "windows")]
 fn is_chinese_windows() -> bool {
-    use std::process::Command;
-    // 用 powershell 获取 UI 语言
-    if let Ok(output) = Command::new("powershell")
-        .args([
-            "-Command",
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; (Get-Culture).Name",
-        ])
-        .output()
-    {
-        let text = String::from_utf8_lossy(&output.stdout);
-        return text.starts_with("zh");
+    // 使用 GetACP 获取系统 ANSI 代码页
+    // 中文代码页: 936 (GBK), 950 (Big5), 54936 (GB18030)
+    unsafe {
+        let acp = windows_sys::Win32::Globalization::GetACP();
+        matches!(acp, 936 | 950 | 54936)
     }
-    false
 }
 
 /// 翻译条目
-fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
+fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
     // 每个 key 对应 [zh, en]
     let entries: Vec<(&str, &str, &str)> = vec![
         // ── common ──
@@ -102,6 +110,7 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
         ("common.yes", "是", "yes"),
         ("common.no", "否", "no"),
         ("common.none", "--", "--"),
+        ("common.metric", "指标", "Metric"),
 
         // ── banner ──
         ("banner.title", "本地网络检测报告", "Local Network Report"),
@@ -119,7 +128,7 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
         ("iface.egress_backup", "~ 备用", "~ backup"),
         ("iface.summary", "共 {0} 个接口，其中 {1} 个虚拟网卡", "{0} interfaces, {1} virtual"),
 
-        // ── iface types (en only, zh is inline in IfaceType::to_label) ──
+        // ── iface types ──
         ("iface.type_loopback", "回环", "Loopback"),
         ("iface.type_ethernet", "以太网", "Ethernet"),
         ("iface.type_wireless", "无线", "Wireless"),
@@ -127,6 +136,9 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
         ("iface.type_clash", "Clash/TUN", "Clash/TUN"),
         ("iface.type_wireguard", "WireGuard", "WireGuard"),
         ("iface.type_openvpn", "OpenVPN", "OpenVPN"),
+        ("iface.type_radmin", "Radmin VPN", "Radmin VPN"),
+        ("iface.type_zerotier", "ZeroTier", "ZeroTier"),
+        ("iface.type_tailscale", "Tailscale", "Tailscale"),
         ("iface.type_virtualbox", "VirtualBox", "VirtualBox"),
         ("iface.type_vmware", "VMware", "VMware"),
         ("iface.type_hyperv", "Hyper-V", "Hyper-V"),
@@ -221,11 +233,11 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
         ("check.port_err", "❌ 端口号无效: {0}", "❌ Invalid port: {0}"),
         ("check.tcp", "类型: TCP", "Type: TCP"),
         ("check.http", "类型: HTTP", "Type: HTTP"),
-        ("check.tcp_ok", "[{0}/{1}] ✓ 连接成功  {2:.2}ms", "[{0}/{1}] ✓ connected  {2:.2}ms"),
+        ("check.tcp_ok", "[{0}/{1}] ✓ 连接成功  {2}ms", "[{0}/{1}] ✓ connected  {2}ms"),
         ("check.tcp_fail", "[{0}/{1}] ✗ 连接失败  {2}", "[{0}/{1}] ✗ failed  {2}"),
         ("check.tcp_timeout", "[{0}/{1}] ✗ 连接超时 ({2}s)", "[{0}/{1}] ✗ timeout ({2}s)"),
-        ("check.http_ok", "[{0}/{1}] {2} {3}  {4:.2}ms", "[{0}/{1}] {2} {3}  {4:.2}ms"),
-        ("check.http_fail", "[{0}/{1}] ✗ {2}  {3:.2}ms", "[{0}/{1}] ✗ {2}  {3:.2}ms"),
+        ("check.http_ok", "[{0}/{1}] {2} {3}  {4}ms", "[{0}/{1}] {2} {3}  {4}ms"),
+        ("check.http_fail", "[{0}/{1}] ✗ {2}  {3}ms", "[{0}/{1}] ✗ {2}  {3}ms"),
         ("check.conn_fail", "连接失败", "connection failed"),
         ("check.req_timeout", "请求超时", "request timeout"),
         ("check.count", "测试次数", "Tests"),
@@ -235,12 +247,13 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
 
         // ── diag ──
         ("diag.title", "🔍 网络诊断报告", "🔍 Network Diagnostics"),
-        ("diag.elapsed", "诊断耗时: {0:.1}s", "Time: {0:.1}s"),
+        ("diag.elapsed", "诊断耗时: {0}s", "Time: {0}s"),
         ("diag.net_ok", "网络连接正常 (出口: {0} {1})", "Network connected (egress: {0} {1})"),
         ("diag.net_fail", "无网络连接", "No network connection"),
         ("diag.dns_ok", "DNS 解析正常 ({0} → {1}, {2}ms)", "DNS OK ({0} → {1}, {2}ms)"),
         ("diag.dns_fail", "DNS 解析失败 ({0})", "DNS failed ({0})"),
         ("diag.gw_ok", "默认网关可达 ({0}, {1}ms)", "Gateway reachable ({0}, {1}ms)"),
+        ("diag.gw_ok_no_rtt", "默认网关存在 ({0})", "Gateway found ({0})"),
         ("diag.gw_fail", "默认网关不可达", "Gateway unreachable"),
         ("diag.proxy_on", "系统代理已启用 ({0})", "System proxy enabled ({0})"),
         ("diag.proxy_off", "系统代理未启用", "System proxy disabled"),
@@ -252,21 +265,18 @@ fn build_dict() -> HashMap<&'static str, Vec<&'static str>> {
 
     let mut map = HashMap::new();
     for (key, zh, en) in entries {
-        map.insert(key, vec![zh, en]);
+        map.insert(key, [zh, en]);
     }
     map
 }
 
-static DICT: Lazy<HashMap<&'static str, Vec<&'static str>>> = Lazy::new(build_dict);
+static DICT: Lazy<HashMap<&'static str, [&'static str; 2]>> = Lazy::new(build_dict);
 
 /// 获取翻译文本（无格式化参数）
 pub fn t(key: &str) -> String {
     let lang = current();
     if let Some(vals) = DICT.get(key) {
-        match lang {
-            Lang::Zh => vals[0].to_string(),
-            Lang::En => vals[1].to_string(),
-        }
+        vals[lang.as_u8() as usize].to_string()
     } else {
         key.to_string()
     }
@@ -286,4 +296,53 @@ pub fn t2(key: &str, a: &str, b: &str) -> String {
 #[allow(dead_code)]
 pub fn t3(key: &str, a: &str, b: &str, c: &str) -> String {
     t(key).replace("{0}", a).replace("{1}", b).replace("{2}", c)
+}
+
+/// 获取翻译文本（带四个格式化参数）
+pub fn t4(key: &str, a: &str, b: &str, c: &str, d: &str) -> String {
+    t(key)
+        .replace("{0}", a)
+        .replace("{1}", b)
+        .replace("{2}", c)
+        .replace("{3}", d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_t_basic() {
+        init(Some(Lang::Zh));
+        assert_eq!(t("common.success"), "成功");
+        init(Some(Lang::En));
+        assert_eq!(t("common.success"), "success");
+    }
+
+    #[test]
+    fn test_t1() {
+        init(Some(Lang::Zh));
+        assert_eq!(t1("ping.title", "baidu.com"), "🏓 Ping baidu.com");
+    }
+
+    #[test]
+    fn test_t2() {
+        init(Some(Lang::En));
+        assert_eq!(t2("ping.target", "host", "1.2.3.4"), "Target: host (1.2.3.4)");
+    }
+
+    #[test]
+    fn test_t4() {
+        init(Some(Lang::Zh));
+        let result = t4("egress.logic_selected", "eth0", "0", "25", "25");
+        assert!(result.contains("eth0"));
+        assert!(result.contains("25"));
+        assert!(!result.contains("{"));
+    }
+
+    #[test]
+    fn test_missing_key() {
+        init(Some(Lang::En));
+        assert_eq!(t("nonexistent.key"), "nonexistent.key");
+    }
 }

@@ -8,7 +8,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::i18n::{t, t1, t2};
-use crate::output::{print_json, OutputMode};
+use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 use socket2::{Domain, Protocol, Socket, Type};
@@ -43,13 +43,14 @@ pub struct TraceOutput {
 /// 执行 traceroute 并输出结果
 pub async fn run(host: &str, mode: OutputMode) {
     // 解析主机
-    let target = match resolve_host(host).await {
+    let target = match crate::util::resolve_host(host).await {
         Some(ip) => ip,
         None => {
+            let msg = t1("trace.resolve_fail", host);
             if mode == OutputMode::Json {
-                println!("{{\"error\": \"{}\"}}", t1("trace.resolve_fail", host));
+                print_json_error(&msg);
             } else {
-                println!("  {}", t1("trace.resolve_fail", host).red());
+                println!("  {}", msg.red());
             }
             return;
         }
@@ -229,7 +230,7 @@ fn icmp_checksum(data: &[u8]) -> u16 {
     !(sum as u16)
 }
 
-fn parse_icmp_response(buf: &[u8], _ident: u16, _seq: u16) -> Option<()> {
+fn parse_icmp_response(buf: &[u8], ident: u16, seq: u16) -> Option<()> {
     if buf.len() < 20 {
         return None;
     }
@@ -239,24 +240,40 @@ fn parse_icmp_response(buf: &[u8], _ident: u16, _seq: u16) -> Option<()> {
     }
     let icmp_type = buf[ihl];
     match icmp_type {
-        0 => Some(()),
-        11 => Some(()),
+        // Echo Reply (type 0) — 验证 ident 和 seq 匹配
+        0 => {
+            let recv_ident = u16::from_be_bytes([buf[ihl + 4], buf[ihl + 5]]);
+            let recv_seq = u16::from_be_bytes([buf[ihl + 6], buf[ihl + 7]]);
+            if recv_ident == ident && recv_seq == seq {
+                Some(())
+            } else {
+                None
+            }
+        }
+        // Time Exceeded (type 11) — 包含原始 IP+ICMP 头，验证原始 ident/seq
+        11 => {
+            // 原始 IP 头在 ICMP 数据部分（offset ihl+8）
+            let inner_start = ihl + 8;
+            if buf.len() < inner_start + 20 + 8 {
+                return Some(()); // 无法解析，仍然接受
+            }
+            let inner_ihl = ((buf[inner_start] & 0x0F) * 4) as usize;
+            let icmp_offset = inner_start + inner_ihl;
+            if buf.len() < icmp_offset + 8 {
+                return Some(());
+            }
+            let orig_type = buf[icmp_offset];
+            if orig_type != 8 {
+                return None; // 不是 Echo Request
+            }
+            let orig_ident = u16::from_be_bytes([buf[icmp_offset + 4], buf[icmp_offset + 5]]);
+            let orig_seq = u16::from_be_bytes([buf[icmp_offset + 6], buf[icmp_offset + 7]]);
+            if orig_ident == ident && orig_seq == seq {
+                Some(())
+            } else {
+                None
+            }
+        }
         _ => None,
-    }
-}
-
-/// 解析主机名为 IP 地址
-async fn resolve_host(host: &str) -> Option<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
-    }
-
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::TokioAsyncResolver;
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match resolver.lookup_ip(host).await {
-        Ok(ips) => ips.iter().next(),
-        Err(_) => None,
     }
 }

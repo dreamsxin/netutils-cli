@@ -1,7 +1,6 @@
-//! 网络接口信息模块。
+//! 网络接口信息模块（公共结构 + 分类逻辑）。
 
 use serde::Serialize;
-use std::process::Command;
 
 /// 网络接口信息
 #[derive(Debug, Clone, Serialize)]
@@ -20,53 +19,6 @@ pub struct InterfaceInfo {
     pub is_egress: bool,
     /// 是否为备用默认路由
     pub is_backup: bool,
-}
-
-/// 从 PowerShell 获取所有网络接口信息（含接口跃点）
-pub fn get_all_interfaces() -> Vec<InterfaceInfo> {
-    let mut interfaces = Vec::new();
-
-    let ps_script = r#"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Get-NetAdapter | ForEach-Object {
-    $adapter = $_
-    $ip = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-    $metric = Get-NetIPInterface -InterfaceIndex $adapter.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1
-    [PSCustomObject]@{
-        Name = $adapter.InterfaceAlias
-        MAC = $adapter.MacAddress
-        IPv4 = if ($ip) { $ip.IPAddress } else { "--" }
-        Status = $adapter.Status
-        Type = $adapter.InterfaceDescription
-        Index = $adapter.ifIndex
-        Metric = if ($metric) { $metric.InterfaceMetric } else { 0 }
-    }
-} | ForEach-Object { "$($_.Name)|$($_.MAC)|$($_.IPv4)|$($_.Status)|$($_.Type)|$($_.Index)|$($_.Metric)" }
-"#;
-
-    if let Ok(output) = Command::new("powershell").args(["-Command", ps_script]).output() {
-        let text = String::from_utf8_lossy(&output.stdout);
-        for line in text.lines() {
-            let parts: Vec<&str> = line.splitn(7, '|').collect();
-            if parts.len() >= 7 {
-                let iftype = classify_interface(parts[4], parts[0]);
-                interfaces.push(InterfaceInfo {
-                    name: parts[0].trim().to_string(),
-                    mac: parts[1].trim().to_string(),
-                    ipv4: parts[2].trim().to_string(),
-                    status: parts[3].trim().to_string(),
-                    description: parts[4].trim().to_string(),
-                    metric: parts[6].trim().parse().unwrap_or(0u32),
-                    iftype: iftype.to_id(),
-                    is_virtual: iftype.is_virtual(),
-                    is_egress: false,
-                    is_backup: false,
-                });
-            }
-        }
-    }
-
-    interfaces
 }
 
 /// 接口类型分类
@@ -107,10 +59,8 @@ impl IfaceType {
         .to_string()
     }
 
-    /// 显示名称（根据语言）
+    /// 显示名称（根据语言，统一走 i18n dict）
     pub fn to_label(&self) -> String {
-        use crate::i18n::{t, Lang};
-        let lang = crate::i18n::current();
         let key = match self {
             IfaceType::Loopback => "iface.type_loopback",
             IfaceType::Ethernet => "iface.type_ethernet",
@@ -126,29 +76,14 @@ impl IfaceType {
             IfaceType::TunTap => "iface.type_tuntap",
             IfaceType::Other => "iface.type_other",
         };
-        match lang {
-            Lang::Zh => match self {
-                IfaceType::Loopback => "回环",
-                IfaceType::Ethernet => "以太网",
-                IfaceType::Wireless => "无线",
-                IfaceType::MihomoTun => "Mihomo/TUN",
-                IfaceType::ClashTun => "Clash/TUN",
-                IfaceType::Wireguard => "WireGuard",
-                IfaceType::Openvpn => "OpenVPN",
-                IfaceType::Virtualbox => "VirtualBox",
-                IfaceType::Vmware => "VMware",
-                IfaceType::Hyperv => "Hyper-V",
-                IfaceType::Docker => "Docker",
-                IfaceType::TunTap => "TUN/TAP",
-                IfaceType::Other => "其他",
-            }
-            .to_string(),
-            Lang::En => t(key),
-        }
+        crate::i18n::t(key)
     }
 
     pub fn is_virtual(&self) -> bool {
-        !matches!(self, IfaceType::Ethernet | IfaceType::Wireless | IfaceType::Loopback | IfaceType::Other)
+        !matches!(
+            self,
+            IfaceType::Ethernet | IfaceType::Wireless | IfaceType::Loopback | IfaceType::Other
+        )
     }
 }
 
@@ -157,7 +92,7 @@ pub fn classify_interface(desc: &str, name: &str) -> IfaceType {
     let desc_lower = desc.to_lowercase();
     let name_lower = name.to_lowercase();
 
-    if desc_lower.contains("loopback") || name_lower == "lo" {
+    if desc_lower.contains("loopback") || name_lower == "lo" || name_lower == "lo0" {
         IfaceType::Loopback
     } else if desc_lower.contains("mihomo") || name_lower.contains("mihomo") {
         IfaceType::MihomoTun
@@ -185,6 +120,8 @@ pub fn classify_interface(desc: &str, name: &str) -> IfaceType {
     } else if desc_lower.contains("ethernet")
         || desc_lower.contains("以太网")
         || desc_lower.contains("pcie")
+        || name_lower.starts_with("eth")
+        || name_lower.starts_with("en")
     {
         IfaceType::Ethernet
     } else {

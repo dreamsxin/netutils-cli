@@ -97,7 +97,7 @@ pub async fn run(mode: OutputMode) {
 
 /// 检测出口
 async fn check_egress() -> DiagItem {
-    let interfaces = crate::info::interface::get_all_interfaces();
+    let interfaces = crate::info::get_all_interfaces();
     let egress_ip = crate::info::egress::detect_egress_ip();
     let egress_iface = egress_ip.and_then(|ip| crate::info::egress::find_egress_interface(&ip, &interfaces));
 
@@ -164,7 +164,7 @@ async fn check_dns() -> DiagItem {
 
 /// 检测网关可达性
 async fn check_gateway() -> DiagItem {
-    let routes = crate::info::route::get_default_routes();
+    let routes = crate::info::get_default_routes();
     if routes.is_empty() {
         return DiagItem {
             check: "gateway".to_string(),
@@ -193,7 +193,7 @@ async fn check_gateway() -> DiagItem {
             check: "gateway".to_string(),
             ok: true,
             warning: true,
-            message: t("diag.gw_ok").replace("{0}", gw_ip).replace(", {1}ms", ""),
+            message: t1("diag.gw_ok_no_rtt", gw_ip),
         },
     };
 
@@ -205,9 +205,7 @@ async fn check_gateway() -> DiagItem {
                 check: "gateway".to_string(),
                 ok: true,
                 warning: false,
-                message: t("diag.gw_ok")
-                    .replace("{0}", gw_ip)
-                    .replace("{1}", &format!("{:.1}", ms)),
+                message: t2("diag.gw_ok", gw_ip, &format!("{:.1}", ms)),
             }
         }
         Err(_) => DiagItem {
@@ -222,15 +220,19 @@ async fn check_gateway() -> DiagItem {
 /// 检测代理状态
 fn check_proxy_status() -> DiagItem {
     let proxies = crate::info::proxy::get_proxy_info();
+    let sys_label = t("proxy.system");
+    let disabled = t("proxy.disabled");
+    let env_label = t("proxy.env");
+    let not_set = t("common.not_set");
 
-    // 找系统代理
+    // 找系统代理（值不是 "disabled"）
     let system_proxy = proxies.iter().find(|p| {
-        p.ptype == t("proxy.system") && p.value != t("proxy.disabled")
+        p.ptype == sys_label && p.value != disabled
     });
 
-    // 找环境变量代理
+    // 找环境变量代理（非系统代理、非环境变量占位行、值不是 "not set"）
     let env_proxy = proxies.iter().find(|p| {
-        p.ptype != t("proxy.system") && p.ptype != t("proxy.env") && p.value != t("common.not_set")
+        p.ptype != sys_label && p.ptype != env_label && p.value != not_set
     });
 
     let proxy_value = system_proxy

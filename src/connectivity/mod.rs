@@ -6,7 +6,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::i18n::t;
-use crate::output::{print_json, OutputMode};
+use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -48,32 +48,41 @@ pub async fn run(target: &str, count: u32, mode: OutputMode) {
     }
 }
 
+/// 解析 host:port（支持 IPv6 如 [::1]:443）
+fn parse_host_port(target: &str) -> Option<(String, u16)> {
+    // 尝试整体解析为 SocketAddr（覆盖 IPv6 [::1]:443 和 IPv4 1.2.3.4:443）
+    if let Ok(addr) = target.parse::<std::net::SocketAddr>() {
+        return Some((addr.ip().to_string(), addr.port()));
+    }
+    // 普通 host:port（最后一个冒号分割）
+    if let Some(idx) = target.rfind(':') {
+        let host = &target[..idx];
+        let port_str = &target[idx + 1..];
+        if let Ok(port) = port_str.parse::<u16>() {
+            // 去掉 IPv6 方括号
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            return Some((host.to_string(), port));
+        }
+    }
+    None
+}
+
 /// TCP 连通性测试
 async fn run_tcp(target: &str, count: u32, mode: OutputMode) {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
-    let parts: Vec<&str> = target.rsplitn(2, ':').collect();
-    if parts.len() != 2 {
-        if mode == OutputMode::Json {
-            println!("{{\"error\": \"{}\"}}", t("check.format_err"));
-        } else {
-            println!("  {}", t("check.format_err").red());
-        }
-        return;
-    }
-    let port: u16 = match parts[0].parse() {
-        Ok(p) => p,
-        Err(_) => {
+    let (host, port) = match parse_host_port(target) {
+        Some(hp) => hp,
+        None => {
             if mode == OutputMode::Json {
-                println!("{{\"error\": \"{}\"}}", t1("check.port_err", parts[0]));
+                print_json_error(&t("check.format_err"));
             } else {
-                println!("  {}", t1("check.port_err", parts[0]).red());
+                println!("  {}", t("check.format_err").red());
             }
             return;
         }
     };
-    let host = parts[1];
 
     let mut probes = Vec::new();
 
@@ -255,18 +264,15 @@ fn compute_stats(probes: &[CheckProbe]) -> CheckStats {
     let total = probes.len();
     let success = probes.iter().filter(|p| p.success).count();
     let rtts: Vec<f64> = probes.iter().filter(|p| p.success).map(|p| p.rtt_ms).collect();
+    let stats = crate::util::compute_stats(&rtts);
 
     CheckStats {
         total,
         success,
         failed: total - success,
-        min_ms: rtts.iter().cloned().fold(f64::INFINITY, f64::min).into(),
-        max_ms: rtts.iter().cloned().fold(f64::NEG_INFINITY, f64::max).into(),
-        avg_ms: if rtts.is_empty() {
-            None
-        } else {
-            Some(rtts.iter().sum::<f64>() / rtts.len() as f64)
-        },
+        min_ms: stats.min_ms,
+        max_ms: stats.max_ms,
+        avg_ms: stats.avg_ms,
     }
 }
 
@@ -275,7 +281,9 @@ fn print_stats(stats: &CheckStats, is_http: bool) {
     println!();
     println!("{}", t("ping.stats").bold());
 
-    let headers = ["指标", "值"];
+    let h_metric = t("common.metric");
+    let h_value = t("proxy.value");
+    let headers = [h_metric.as_str(), h_value.as_str()];
     let mut rows = Vec::new();
     rows.push(vec![t("check.count"), stats.total.to_string()]);
 
@@ -294,5 +302,3 @@ fn print_stats(stats: &CheckStats, is_http: bool) {
 
     print_table(&headers, &rows);
 }
-
-use crate::i18n::t1;

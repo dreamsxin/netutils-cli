@@ -5,16 +5,38 @@ pub mod interface;
 pub mod proxy;
 pub mod route;
 
+// 平台特定实现
+#[cfg(target_os = "windows")]
+mod interface_win;
+#[cfg(target_os = "windows")]
+mod route_win;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod interface_unix;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod route_unix;
+
+// 平台分发
+#[cfg(target_os = "windows")]
+pub use interface_win::get_all_interfaces;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use interface_unix::get_all_interfaces;
+
+#[cfg(target_os = "windows")]
+pub use route_win::{get_default_routes, get_route_table};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use route_unix::{get_default_routes, get_route_table};
+
 use colored::*;
 use serde::Serialize;
 
-use crate::i18n::{t, t2};
+use crate::i18n::{t, t2, t4};
 use crate::output::{print_json, OutputMode};
 use crate::table::print_table;
 
 use egress::{detect_egress_ip, find_egress_interface};
-use interface::{classify_interface, get_all_interfaces, InterfaceInfo};
-use route::{get_default_routes, get_route_table, RouteEntry};
+use interface::{classify_interface, InterfaceInfo};
+use route::RouteEntry;
 use proxy::{get_proxy_info, ProxyEntry};
 
 // ═══════════════════════════════════════════════════════════════
@@ -201,8 +223,13 @@ pub fn print_egress(mode: OutputMode) {
             println!("  │");
             println!(
                 "  │  {}",
-                t2("egress.logic_selected", &info.interface, &info.metric.to_string())
-                    .replace("{3}", &info.metric.to_string())
+                t4(
+                    "egress.logic_selected",
+                    &info.interface,
+                    "0",            // 路由跃点
+                    &info.metric.to_string(), // 接口跃点
+                    &info.metric.to_string()  // 有效跃点
+                )
             );
             println!("  └─");
         }

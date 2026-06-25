@@ -6,7 +6,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::i18n::t;
-use crate::output::{print_json, OutputMode};
+use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 /// 单次 ping 结果
@@ -42,13 +42,14 @@ pub struct PingOutput {
 /// 执行 ping 并输出结果
 pub async fn run(host: &str, count: u32, mode: OutputMode) {
     // 解析主机
-    let target = match resolve_host(host).await {
+    let target = match crate::util::resolve_host(host).await {
         Some(ip) => ip,
         None => {
+            let msg = t("ping.resolve_fail").replace("{0}", host);
             if mode == OutputMode::Json {
-                println!("{{\"error\": \"{}\"}}", t("ping.resolve_fail").replace("{0}", host));
+                print_json_error(&msg);
             } else {
-                println!("  {}", t("ping.resolve_fail").replace("{0}", host).red());
+                println!("  {}", msg.red());
             }
             return;
         }
@@ -104,18 +105,15 @@ fn compute_stats(probes: &[ProbeResult]) -> PingStats {
         0.0
     };
     let rtts: Vec<f64> = probes.iter().filter_map(|r| r.rtt_ms).collect();
+    let stats = crate::util::compute_stats(&rtts);
     PingStats {
         sent: total,
         received: success,
         lost,
         loss_rate,
-        min_ms: rtts.iter().cloned().fold(f64::INFINITY, f64::min).into(),
-        max_ms: rtts.iter().cloned().fold(f64::NEG_INFINITY, f64::max).into(),
-        avg_ms: if rtts.is_empty() {
-            None
-        } else {
-            Some(rtts.iter().sum::<f64>() / rtts.len() as f64)
-        },
+        min_ms: stats.min_ms,
+        max_ms: stats.max_ms,
+        avg_ms: stats.avg_ms,
     }
 }
 
@@ -149,8 +147,6 @@ fn print_ping_stats(stats: &PingStats) {
     println!();
     println!("{}", t("ping.stats").bold());
 
-    let h_metric = t("ping.sent") + "0"; // placeholder for metric column header
-    let _ = h_metric;
     let mut rows = Vec::new();
     rows.push(vec![t("ping.sent"), stats.sent.to_string()]);
     rows.push(vec![t("ping.recv"), stats.received.to_string()]);
@@ -163,28 +159,9 @@ fn print_ping_stats(stats: &PingStats) {
         rows.push(vec![t("ping.avg"), format!("{:.2}ms", avg)]);
     }
 
-    let h0 = crate::i18n::t("common.success"); // reuse as "Metric" label
-    let h0 = if crate::i18n::current() == crate::i18n::Lang::Zh { "指标".to_string() } else { h0 };
-    let h1 = crate::i18n::t("proxy.value");
+    let h0 = t("common.metric");
+    let h1 = t("proxy.value");
     print_table(&[h0.as_str(), h1.as_str()], &rows);
-}
-
-/// 解析主机名为 IP 地址
-async fn resolve_host(host: &str) -> Option<std::net::IpAddr> {
-    use std::net::IpAddr;
-
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
-    }
-
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::TokioAsyncResolver;
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match resolver.lookup_ip(host).await {
-        Ok(ips) => ips.iter().next(),
-        Err(_) => None,
-    }
 }
 
 /// ICMP ping（需要权限），返回探测结果
