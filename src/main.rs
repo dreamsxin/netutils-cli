@@ -1,4 +1,5 @@
 mod cli;
+mod connections;
 mod connectivity;
 mod diag;
 mod dns;
@@ -47,6 +48,12 @@ async fn main() -> anyhow::Result<()> {
             portscan::run(&host, port_ref, mode).await;
         }
         Some(Commands::Check { target, count }) => connectivity::run(&target, count, mode).await,
+        Some(Commands::Connections { state, port, process }) => {
+            connections::run(
+                connections::ConnFilter { state, port, process },
+                mode,
+            );
+        }
         Some(Commands::Diag) => diag::run(mode).await,
     }
 

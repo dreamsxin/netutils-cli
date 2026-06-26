@@ -246,6 +246,19 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("check.ok_2xx", "成功 (2xx)", "OK (2xx)"),
 
         // ── diag ──
+        // ── connections ──
+        ("connections.title", "📡 活动网络连接", "📡 Active Network Connections"),
+        ("connections.proto", "协议", "Protocol"),
+        ("connections.local", "本地地址", "Local Address"),
+        ("connections.remote", "远程地址", "Remote Address"),
+        ("connections.state", "状态", "State"),
+        ("connections.pid", "PID", "PID"),
+        ("connections.process", "进程", "Process"),
+        ("connections.no_result", "未找到连接", "No connections found"),
+        ("connections.summary", "共 {0} 个连接（{1} TCP, {2} UDP）", "{0} connections ({1} TCP, {2} UDP)"),
+        ("connections.no_admin", "注意：非管理员权限下进程信息可能不完整", "Note: process info may be incomplete without admin privileges"),
+
+        // ── diag ──
         ("diag.title", "🔍 网络诊断报告", "🔍 Network Diagnostics"),
         ("diag.elapsed", "诊断耗时: {0}s", "Time: {0}s"),
         ("diag.check_egress", "出口", "Egress"),

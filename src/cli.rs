@@ -89,6 +89,20 @@ pub enum Commands {
         count: u32,
     },
 
+    /// 列出当前网络连接（TCP/UDP）
+    #[command(visible_alias = "co", alias = "conn")]
+    Connections {
+        /// 按状态过滤（如 ESTABLISHED, LISTEN）
+        #[arg(short, long)]
+        state: Option<String>,
+        /// 按端口过滤
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// 按进程名过滤
+        #[arg(long)]
+        process: Option<String>,
+    },
+
     /// 一键诊断（组合检测，给出结论）
     #[command(alias = "dx")]
     Diag,
