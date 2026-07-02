@@ -4,6 +4,9 @@ use std::process::Command;
 
 use super::interface::{classify_interface, InterfaceInfo};
 
+#[cfg(any(target_os = "macos", test))]
+use std::collections::HashMap;
+
 /// 获取所有网络接口信息
 pub fn get_all_interfaces() -> Vec<InterfaceInfo> {
     #[cfg(target_os = "linux")]
@@ -174,6 +177,7 @@ fn parse_ip_addr_text(text: &str) -> Vec<InterfaceInfo> {
 /// macOS: 解析 `ifconfig` 输出
 #[cfg(target_os = "macos")]
 fn get_interfaces_macos() -> Vec<InterfaceInfo> {
+    let service_order = get_macos_service_order();
     let output = match Command::new("ifconfig").output() {
         Ok(o) => o,
         Err(_) => return Vec::new(),
@@ -200,13 +204,14 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
             // 保存前一个
             if !current_name.is_empty() && current_name != "lo0" {
                 let iftype = classify_interface(&current_name, &current_name);
+                let metric = service_order.get(&current_name).copied().unwrap_or(0);
                 interfaces.push(InterfaceInfo {
                     name: current_name.clone(),
                     mac: current_mac.clone(),
                     ipv4: current_ipv4.clone(),
                     status: if is_up { "Up" } else { "Down" }.to_string(),
                     description: current_name.clone(),
-                    metric: 0,
+                    metric,
                     iftype: iftype.to_id(),
                     is_virtual: iftype.is_virtual(),
                     is_egress: false,
@@ -232,13 +237,14 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     // 最后一个
     if !current_name.is_empty() && current_name != "lo0" {
         let iftype = classify_interface(&current_name, &current_name);
+        let metric = service_order.get(&current_name).copied().unwrap_or(0);
         interfaces.push(InterfaceInfo {
             name: current_name.clone(),
             mac: current_mac,
             ipv4: current_ipv4,
             status: if is_up { "Up" } else { "Down" }.to_string(),
             description: current_name,
-            metric: 0,
+            metric,
             iftype: iftype.to_id(),
             is_virtual: iftype.is_virtual(),
             is_egress: false,
@@ -247,4 +253,82 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     }
 
     interfaces
+}
+
+#[cfg(target_os = "macos")]
+fn get_macos_service_order() -> HashMap<String, u32> {
+    let output = match Command::new("networksetup")
+        .arg("-listnetworkserviceorder")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return HashMap::new(),
+    };
+    parse_macos_service_order(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_service_order(text: &str) -> HashMap<String, u32> {
+    let mut order_by_device = HashMap::new();
+    let mut current_order = None;
+
+    for line in text.lines().map(str::trim) {
+        if let Some(order) = parse_service_order_line(line) {
+            current_order = Some(order);
+            continue;
+        }
+
+        if let Some(order) = current_order {
+            if let Some(device) = parse_service_device_line(line) {
+                order_by_device.insert(device, order);
+                current_order = None;
+            }
+        }
+    }
+
+    order_by_device
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_service_order_line(line: &str) -> Option<u32> {
+    let rest = line.strip_prefix('(')?;
+    let (num, _) = rest.split_once(')')?;
+    num.parse().ok()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_service_device_line(line: &str) -> Option<String> {
+    let marker = "Device: ";
+    let start = line.find(marker)? + marker.len();
+    let rest = &line[start..];
+    let end = rest.find(')').unwrap_or(rest.len());
+    let device = rest[..end].trim();
+    if device.is_empty() {
+        None
+    } else {
+        Some(device.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_macos_network_service_order() {
+        let text = r#"
+An asterisk (*) denotes that a network service is disabled.
+(1) Wi-Fi
+(Hardware Port: Wi-Fi, Device: en0)
+(2) USB 10/100/1000 LAN
+(Hardware Port: USB 10/100/1000 LAN, Device: en5)
+(3) Thunderbolt Bridge
+(Hardware Port: Thunderbolt Bridge, Device: bridge0)
+"#;
+
+        let parsed = parse_macos_service_order(text);
+        assert_eq!(parsed.get("en0"), Some(&1));
+        assert_eq!(parsed.get("en5"), Some(&2));
+        assert_eq!(parsed.get("bridge0"), Some(&3));
+    }
 }

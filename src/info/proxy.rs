@@ -118,8 +118,10 @@ fn parse_macos_scutil_proxy(text: &str) -> Option<String> {
     let http_enabled = proxy_flag(text, "HTTPEnable");
     let https_enabled = proxy_flag(text, "HTTPSEnable");
     let socks_enabled = proxy_flag(text, "SOCKSEnable");
+    let ftp_enabled = proxy_flag(text, "FTPEnable");
     let pac_enabled = proxy_flag(text, "ProxyAutoConfigEnable");
     let auto_discovery_enabled = proxy_flag(text, "ProxyAutoDiscoveryEnable");
+    let exclude_simple = proxy_flag(text, "ExcludeSimpleHostnames");
 
     let http = if http_enabled {
         proxy_host_port(text, "HTTPProxy", "HTTPPort").map(|addr| format!("http={addr}"))
@@ -137,6 +139,11 @@ fn parse_macos_scutil_proxy(text: &str) -> Option<String> {
     } else {
         None
     };
+    let ftp = if ftp_enabled {
+        proxy_host_port(text, "FTPProxy", "FTPPort").map(|addr| format!("ftp={addr}"))
+    } else {
+        None
+    };
     let pac = if pac_enabled {
         proxy_value(text, "ProxyAutoConfigURLString").map(|url| format!("pac={url}"))
     } else {
@@ -147,8 +154,25 @@ fn parse_macos_scutil_proxy(text: &str) -> Option<String> {
     } else {
         None
     };
+    let simple_hosts = if exclude_simple {
+        Some("exclude-simple-hostnames=true".to_string())
+    } else {
+        None
+    };
+    let exceptions = proxy_array_values(text, "ExceptionsList")
+        .filter(|items| !items.is_empty())
+        .map(|items| format!("bypass={}", items.join(",")));
 
-    join_proxy_parts([http, https, socks, pac, auto_discovery])
+    join_proxy_parts([
+        http,
+        https,
+        socks,
+        ftp,
+        pac,
+        auto_discovery,
+        simple_hosts,
+        exceptions,
+    ])
 }
 
 #[cfg(target_os = "linux")]
@@ -229,6 +253,34 @@ fn proxy_value(text: &str, key: &str) -> Option<String> {
     None
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn proxy_array_values(text: &str, key: &str) -> Option<Vec<String>> {
+    let mut values = Vec::new();
+    let mut in_array = false;
+
+    for line in text.lines().map(str::trim) {
+        if !in_array {
+            if line.starts_with(key) && line.contains("<array>") {
+                in_array = true;
+            }
+            continue;
+        }
+
+        if line == "}" {
+            break;
+        }
+
+        if let Some((_, value)) = line.split_once(':') {
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if !value.is_empty() {
+                values.push(value.to_string());
+            }
+        }
+    }
+
+    Some(values)
+}
+
 #[cfg(target_os = "linux")]
 fn proxy_part_from_host_port(
     kind: &str,
@@ -275,15 +327,23 @@ mod tests {
   SOCKSEnable : 1
   SOCKSPort : 1080
   SOCKSProxy : 10.0.0.1
+  FTPEnable : 1
+  FTPPort : 2121
+  FTPProxy : ftp.local
   ProxyAutoConfigEnable : 1
   ProxyAutoConfigURLString : http://proxy.local/proxy.pac
+  ExcludeSimpleHostnames : 1
+  ExceptionsList : <array> {
+    0 : *.local
+    1 : 169.254/16
+  }
 }
 "#;
 
         let parsed = parse_macos_scutil_proxy(text).unwrap();
         assert_eq!(
             parsed,
-            "http=127.0.0.1:7890;https=proxy.local:7891;socks=socks5h://10.0.0.1:1080;pac=http://proxy.local/proxy.pac"
+            "http=127.0.0.1:7890;https=proxy.local:7891;socks=socks5h://10.0.0.1:1080;ftp=ftp.local:2121;pac=http://proxy.local/proxy.pac;exclude-simple-hostnames=true;bypass=*.local,169.254/16"
         );
     }
 
