@@ -11,7 +11,7 @@ mod interface_win;
 #[cfg(target_os = "windows")]
 mod route_win;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod interface_unix;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod route_unix;

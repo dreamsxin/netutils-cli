@@ -8,8 +8,10 @@ use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
 use trust_dns_resolver::config::*;
-use trust_dns_resolver::proto::rr::{RecordType, RData};
+use trust_dns_resolver::proto::rr::{RData, RecordType};
 use trust_dns_resolver::TokioAsyncResolver;
+
+const DNS_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// DNS 记录类型
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -51,7 +53,12 @@ pub struct DnsRecord {
 }
 
 /// 执行 DNS 查询并输出结果
-pub async fn run(domain: &str, record_type: DnsRecordType, server: Option<String>, mode: OutputMode) {
+pub async fn run(
+    domain: &str,
+    record_type: DnsRecordType,
+    server: Option<String>,
+    mode: OutputMode,
+) {
     let resolver = build_resolver(server.as_deref());
 
     let type_str = match record_type {
@@ -107,7 +114,10 @@ pub async fn run(domain: &str, record_type: DnsRecordType, server: Option<String
             }
 
             println!();
-            println!("  {}", t("dns.elapsed").replace("{0}", &format!("{:.2}", output.elapsed_ms)));
+            println!(
+                "  {}",
+                t("dns.elapsed").replace("{0}", &format!("{:.2}", output.elapsed_ms))
+            );
         }
         Err(e) => {
             let msg = t("dns.fail").replace("{0}", &e);
@@ -124,15 +134,16 @@ pub async fn run(domain: &str, record_type: DnsRecordType, server: Option<String
 fn build_resolver(server: Option<&str>) -> TokioAsyncResolver {
     match server {
         Some(addr) => {
-            use trust_dns_resolver::config::*;
             use std::net::SocketAddr;
             use std::str::FromStr;
+            use trust_dns_resolver::config::*;
 
             // 解析服务器地址，默认端口 53
             let socket_addr = if addr.contains(':') {
                 SocketAddr::from_str(addr).unwrap_or_else(|_| SocketAddr::from(([8, 8, 8, 8], 53)))
             } else {
-                SocketAddr::from_str(&format!("{}:53", addr)).unwrap_or_else(|_| SocketAddr::from(([8, 8, 8, 8], 53)))
+                SocketAddr::from_str(&format!("{}:53", addr))
+                    .unwrap_or_else(|_| SocketAddr::from(([8, 8, 8, 8], 53)))
             };
 
             let name_server = NameServerConfig {
@@ -146,9 +157,7 @@ fn build_resolver(server: Option<&str>) -> TokioAsyncResolver {
             let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
             TokioAsyncResolver::tokio(config, ResolverOpts::default())
         }
-        None => {
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
-        }
+        None => TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
     }
 }
 
@@ -159,14 +168,19 @@ async fn query_record(
     record_type: DnsRecordType,
 ) -> Result<Vec<DnsRecord>, String> {
     let rt = record_type.to_record_type();
-    let lookup = resolver.lookup(domain, rt).await.map_err(|e| e.to_string())?;
+    let lookup = tokio::time::timeout(DNS_QUERY_TIMEOUT, resolver.lookup(domain, rt))
+        .await
+        .map_err(|_| "timeout".to_string())?
+        .map_err(|e| e.to_string())?;
 
     let records: Vec<DnsRecord> = lookup
         .record_iter()
-        .filter_map(|r| r.data().map(|d| DnsRecord {
-            value: format_record(d),
-            ttl: r.ttl(),
-        }))
+        .filter_map(|r| {
+            r.data().map(|d| DnsRecord {
+                value: format_record(d),
+                ttl: r.ttl(),
+            })
+        })
         .collect();
 
     Ok(records)

@@ -146,4 +146,23 @@ pub enum Commands {
         /// 目标主机名或 IP
         host: String,
     },
+
+    /// HTTP 请求路径分析：DNS → 代理/出口 → Trace → TCP/TLS/HTTP
+    #[command(alias = "pa")]
+    Path {
+        /// HTTP/HTTPS URL，省略 scheme 时默认 https://
+        url: String,
+        /// traceroute 最大跳数（默认 10）
+        #[arg(long, default_value_t = 10)]
+        max_hops: u32,
+        /// 请求/连接超时秒数（默认 5）
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+        /// 指定代理（如 http://127.0.0.1:7897）
+        #[arg(long)]
+        proxy: Option<String>,
+        /// 强制直连，忽略系统代理
+        #[arg(long)]
+        no_proxy: bool,
+    },
 }

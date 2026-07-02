@@ -1,5 +1,6 @@
 //! Traceroute 模块：TTL 递增探测路由路径。
 
+use std::io::{self, Write};
 use std::mem::MaybeUninit;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
@@ -9,12 +10,13 @@ use serde::Serialize;
 
 use crate::i18n::{t, t1, t2};
 use crate::output::{print_json, print_json_error, OutputMode};
-use crate::table::print_table;
 
 use socket2::{Domain, Protocol, Socket, Type};
 
 const PROBES_PER_HOP: u32 = 3;
 const TIMEOUT: Duration = Duration::from_secs(2);
+const PROBE_DEADLINE: Duration = Duration::from_millis(2500);
+const MAX_CONSECUTIVE_TIMEOUT_HOPS: u32 = 5;
 
 /// 单次探测结果
 #[derive(Serialize, Clone)]
@@ -39,6 +41,37 @@ pub struct TraceOutput {
     pub hops: Vec<Hop>,
 }
 
+/// 快速收集 traceroute 跳点，每跳只探测一次，适合组合诊断命令。
+pub async fn collect_trace_quick(target: IpAddr, max_hops: u32) -> Vec<Hop> {
+    collect_trace_with_probe_count(target, max_hops, 1).await
+}
+
+async fn collect_trace_with_probe_count(
+    target: IpAddr,
+    max_hops: u32,
+    probes_per_hop: u32,
+) -> Vec<Hop> {
+    let mut hops = Vec::new();
+    let mut consecutive_timeout_hops = 0;
+
+    for ttl in 1..=max_hops {
+        let hop = trace_hop_with_probe_count(target, ttl, probes_per_hop).await;
+        let reached = hop.reached;
+        if hop_all_timed_out(&hop) {
+            consecutive_timeout_hops += 1;
+        } else {
+            consecutive_timeout_hops = 0;
+        }
+        hops.push(hop);
+
+        if reached || consecutive_timeout_hops >= MAX_CONSECUTIVE_TIMEOUT_HOPS {
+            break;
+        }
+    }
+
+    hops
+}
+
 /// 执行 traceroute 并输出结果
 pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
     // 解析主机
@@ -57,14 +90,35 @@ pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
 
     let mut hops = Vec::new();
     let mut reached_dest = false;
+    let mut stopped_after_timeouts = false;
+    let mut consecutive_timeout_hops = 0;
+
+    if mode != OutputMode::Json {
+        print_trace_header(host, target, max_hops);
+    }
 
     for ttl in 1..=max_hops {
         let hop = trace_hop(target, ttl).await;
         let is_reached = hop.reached;
+
+        if mode != OutputMode::Json {
+            print_hop_row(&hop);
+        }
+
+        if hop_all_timed_out(&hop) {
+            consecutive_timeout_hops += 1;
+        } else {
+            consecutive_timeout_hops = 0;
+        }
+
         hops.push(hop);
 
         if is_reached {
             reached_dest = true;
+            break;
+        }
+        if consecutive_timeout_hops >= MAX_CONSECUTIVE_TIMEOUT_HOPS {
+            stopped_after_timeouts = true;
             break;
         }
     }
@@ -80,7 +134,26 @@ pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
         return;
     }
 
-    // 表格输出
+    if !reached_dest {
+        println!();
+        if stopped_after_timeouts {
+            println!(
+                "  {}",
+                t1(
+                    "trace.stopped_no_response",
+                    &MAX_CONSECUTIVE_TIMEOUT_HOPS.to_string()
+                )
+                .yellow()
+            );
+        }
+        println!(
+            "  {}",
+            t1("trace.not_reached", &max_hops.to_string()).yellow()
+        );
+    }
+}
+
+fn print_trace_header(host: &str, target: IpAddr, max_hops: u32) {
     println!();
     println!("{}", t1("trace.title", host).bold());
     println!("  {}", t2("trace.target", host, &target.to_string()));
@@ -92,55 +165,53 @@ pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
     let h_p1 = t1("trace.probe", "1");
     let h_p2 = t1("trace.probe", "2");
     let h_p3 = t1("trace.probe", "3");
-    let headers = [
-        h_hop.as_str(),
-        h_ip.as_str(),
-        h_p1.as_str(),
-        h_p2.as_str(),
-        h_p3.as_str(),
-    ];
+    println!(
+        "{:<5} {:<40} {:>12} {:>12} {:>12}",
+        h_hop, h_ip, h_p1, h_p2, h_p3
+    );
+    println!("{:-<5} {:-<40} {:-<12} {:-<12} {:-<12}", "", "", "", "", "");
+    let _ = io::stdout().flush();
+}
 
-    let rows: Vec<Vec<String>> = hops
+fn print_hop_row(hop: &Hop) {
+    let ip_str = hop
+        .probes
         .iter()
-        .map(|hop| {
-            let mut row = vec![hop.ttl.to_string()];
-
-            let ip_str = hop
-                .probes
-                .iter()
-                .find_map(|p| p.ip.as_ref().map(|ip| ip.clone()))
-                .unwrap_or_else(|| "*".to_string());
-            row.push(ip_str);
-
-            for i in 0..PROBES_PER_HOP as usize {
-                if let Some(Some(rtt)) = hop.probes.get(i).map(|p| p.rtt_ms) {
-                    row.push(format!("{:.2}ms", rtt));
-                } else {
-                    row.push("*".to_string());
-                }
-            }
-
-            row
-        })
-        .collect();
-
-    print_table(&headers, &rows);
-
-    if !reached_dest {
-        println!();
-        println!(
-            "  {}",
-            t1("trace.not_reached", &max_hops.to_string()).yellow()
-        );
+        .find_map(|p| p.ip.as_ref().map(|ip| ip.clone()))
+        .unwrap_or_else(|| "*".to_string());
+    let mut probe_cells = Vec::new();
+    for i in 0..PROBES_PER_HOP as usize {
+        let cell = if let Some(Some(rtt)) = hop.probes.get(i).map(|p| p.rtt_ms) {
+            format!("{:.2}ms", rtt)
+        } else {
+            "*".to_string()
+        };
+        probe_cells.push(cell);
     }
+
+    println!(
+        "{:<5} {:<40} {:>12} {:>12} {:>12}",
+        hop.ttl, ip_str, probe_cells[0], probe_cells[1], probe_cells[2]
+    );
+    let _ = io::stdout().flush();
+}
+
+fn hop_all_timed_out(hop: &Hop) -> bool {
+    hop.probes
+        .iter()
+        .all(|probe| probe.ip.is_none() && probe.rtt_ms.is_none())
 }
 
 /// 探测单跳
 async fn trace_hop(target: IpAddr, ttl: u32) -> Hop {
+    trace_hop_with_probe_count(target, ttl, PROBES_PER_HOP).await
+}
+
+async fn trace_hop_with_probe_count(target: IpAddr, ttl: u32, probes_per_hop: u32) -> Hop {
     let mut probes = Vec::new();
     let mut reached = false;
 
-    for probe_seq in 0..PROBES_PER_HOP {
+    for probe_seq in 0..probes_per_hop {
         match send_probe(target, ttl, probe_seq).await {
             Some((ip, rtt)) => {
                 if ip == target {
@@ -175,6 +246,20 @@ async fn send_probe(target: IpAddr, ttl: u32, probe_seq: u32) -> Option<(IpAddr,
 
 /// IPv4 ICMP 探测
 async fn send_probe_v4(target: Ipv4Addr, ttl: u32, probe_seq: u32) -> Option<(IpAddr, Duration)> {
+    tokio::time::timeout(
+        PROBE_DEADLINE,
+        tokio::task::spawn_blocking(move || send_probe_v4_blocking(target, ttl, probe_seq)),
+    )
+    .await
+    .ok()?
+    .ok()?
+}
+
+fn send_probe_v4_blocking(
+    target: Ipv4Addr,
+    ttl: u32,
+    probe_seq: u32,
+) -> Option<(IpAddr, Duration)> {
     let socket = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4)).ok()?;
     socket.set_ttl_v4(ttl).ok()?;
     socket.set_read_timeout(Some(TIMEOUT)).ok()?;
@@ -198,6 +283,7 @@ async fn send_probe_v4(target: Ipv4Addr, ttl: u32, probe_seq: u32) -> Option<(Ip
                     return Some((from_ip, start.elapsed()));
                 }
             }
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
             Err(_) => return None,
         }
     }

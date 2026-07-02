@@ -1,5 +1,6 @@
 //! Linux/macOS 网络接口实现。
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 
 use super::interface::{classify_interface, InterfaceInfo};
@@ -8,6 +9,10 @@ use super::interface::{classify_interface, InterfaceInfo};
 use std::collections::HashMap;
 
 /// 获取所有网络接口信息
+#[cfg_attr(
+    all(test, not(any(target_os = "linux", target_os = "macos"))),
+    allow(dead_code)
+)]
 pub fn get_all_interfaces() -> Vec<InterfaceInfo> {
     #[cfg(target_os = "linux")]
     {
@@ -16,6 +21,10 @@ pub fn get_all_interfaces() -> Vec<InterfaceInfo> {
     #[cfg(target_os = "macos")]
     {
         get_interfaces_macos()
+    }
+    #[cfg(all(test, not(any(target_os = "linux", target_os = "macos"))))]
+    {
+        Vec::new()
     }
 }
 
@@ -184,46 +193,41 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     };
     let text = String::from_utf8_lossy(&output.stdout);
 
+    parse_macos_ifconfig(&text, &service_order)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_macos_ifconfig(text: &str, service_order: &HashMap<String, u32>) -> Vec<InterfaceInfo> {
     let mut interfaces = Vec::new();
     let mut current_name = String::new();
     let mut current_mac = String::from("--");
     let mut current_ipv4 = String::from("--");
     let mut is_up = false;
 
-    for line in text.lines() {
-        let line = line.trim();
-        // 接口行: "en0: flags=..."
-        if !line.is_empty()
-            && line
-                .chars()
-                .next()
-                .map(|c| c.is_alphanumeric())
-                .unwrap_or(false)
-            && line.contains(':')
-        {
-            // 保存前一个
-            if !current_name.is_empty() && current_name != "lo0" {
-                let iftype = classify_interface(&current_name, &current_name);
-                let metric = service_order.get(&current_name).copied().unwrap_or(0);
-                interfaces.push(InterfaceInfo {
-                    name: current_name.clone(),
-                    mac: current_mac.clone(),
-                    ipv4: current_ipv4.clone(),
-                    status: if is_up { "Up" } else { "Down" }.to_string(),
-                    description: current_name.clone(),
-                    metric,
-                    iftype: iftype.to_id(),
-                    is_virtual: iftype.is_virtual(),
-                    is_egress: false,
-                    is_backup: false,
-                });
+    for raw_line in text.lines() {
+        // Only non-indented lines like `en0: flags=...` start a new interface.
+        // Indented property lines such as `ether ...`, `media: ...`, or
+        // `status: ...` must stay attached to the current interface.
+        if raw_line == raw_line.trim_start() {
+            if let Some((name, rest)) = raw_line.split_once(": flags=") {
+                push_macos_interface(
+                    &mut interfaces,
+                    &current_name,
+                    &current_mac,
+                    &current_ipv4,
+                    is_up,
+                    service_order,
+                );
+                current_name = name.to_string();
+                current_mac = "--".to_string();
+                current_ipv4 = "--".to_string();
+                is_up = rest.contains("<UP,") || rest.contains("<UP>");
+                continue;
             }
-            let name = line.split(':').next().unwrap_or("").to_string();
-            current_name = name;
-            current_mac = "--".to_string();
-            current_ipv4 = "--".to_string();
-            is_up = line.contains("UP");
-        } else if line.starts_with("ether ") {
+        }
+
+        let line = raw_line.trim();
+        if line.starts_with("ether ") {
             if let Some(mac) = line.split_whitespace().nth(1) {
                 current_mac = mac.to_string();
             }
@@ -234,25 +238,45 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
         }
     }
 
-    // 最后一个
-    if !current_name.is_empty() && current_name != "lo0" {
-        let iftype = classify_interface(&current_name, &current_name);
-        let metric = service_order.get(&current_name).copied().unwrap_or(0);
-        interfaces.push(InterfaceInfo {
-            name: current_name.clone(),
-            mac: current_mac,
-            ipv4: current_ipv4,
-            status: if is_up { "Up" } else { "Down" }.to_string(),
-            description: current_name,
-            metric,
-            iftype: iftype.to_id(),
-            is_virtual: iftype.is_virtual(),
-            is_egress: false,
-            is_backup: false,
-        });
-    }
+    push_macos_interface(
+        &mut interfaces,
+        &current_name,
+        &current_mac,
+        &current_ipv4,
+        is_up,
+        service_order,
+    );
 
     interfaces
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn push_macos_interface(
+    interfaces: &mut Vec<InterfaceInfo>,
+    name: &str,
+    mac: &str,
+    ipv4: &str,
+    is_up: bool,
+    service_order: &HashMap<String, u32>,
+) {
+    if name.is_empty() || name == "lo0" {
+        return;
+    }
+
+    let iftype = classify_interface(name, name);
+    let metric = service_order.get(name).copied().unwrap_or(0);
+    interfaces.push(InterfaceInfo {
+        name: name.to_string(),
+        mac: mac.to_string(),
+        ipv4: ipv4.to_string(),
+        status: if is_up { "Up" } else { "Down" }.to_string(),
+        description: name.to_string(),
+        metric,
+        iftype: iftype.to_id(),
+        is_virtual: iftype.is_virtual(),
+        is_egress: false,
+        is_backup: false,
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -330,5 +354,36 @@ An asterisk (*) denotes that a network service is disabled.
         assert_eq!(parsed.get("en0"), Some(&1));
         assert_eq!(parsed.get("en5"), Some(&2));
         assert_eq!(parsed.get("bridge0"), Some(&3));
+    }
+
+    #[test]
+    fn parses_macos_ifconfig_without_treating_properties_as_interfaces() {
+        let text = r#"
+lo0: flags=8049<UP,LOOPBACK,RUNNING,MULTICAST> mtu 16384
+        inet 127.0.0.1 netmask 0xff000000
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+        ether fc:aa:14:00:00:01
+        inet6 fe80::1%en0 prefixlen 64 secured scopeid 0xb
+        inet 192.168.25.138 netmask 0xffffff00 broadcast 192.168.25.255
+        media: autoselect
+        status: active
+utun89: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500
+        inet 172.18.0.1 --> 172.18.0.1 netmask 0xffffffff
+        inet6 fe80::2%utun89 prefixlen 64 scopeid 0x1d
+"#;
+        let service_order = HashMap::from([("en0".to_string(), 6)]);
+
+        let parsed = parse_macos_ifconfig(text, &service_order);
+        let names = parsed
+            .iter()
+            .map(|iface| iface.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, vec!["en0", "utun89"]);
+        assert_eq!(parsed[0].mac, "fc:aa:14:00:00:01");
+        assert_eq!(parsed[0].ipv4, "192.168.25.138");
+        assert_eq!(parsed[0].metric, 6);
+        assert_eq!(parsed[1].ipv4, "172.18.0.1");
+        assert_eq!(parsed[1].iftype, "tun-tap");
     }
 }

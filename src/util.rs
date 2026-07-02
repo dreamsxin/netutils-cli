@@ -1,7 +1,8 @@
 //! 公共工具函数模块。
 
 use serde::Serialize;
-use std::net::IpAddr;
+use std::collections::HashSet;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -18,18 +19,51 @@ pub struct Stats {
 
 /// 解析主机名为 IP 地址（消除各模块重复代码）
 pub async fn resolve_host(host: &str) -> Option<IpAddr> {
+    resolve_host_all(host).await.into_iter().next()
+}
+
+/// 解析主机名为所有可用 IP，优先使用 trust-dns，失败时回退到系统解析。
+pub async fn resolve_host_all(host: &str) -> Vec<IpAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return Some(ip);
+        return vec![ip];
     }
 
+    let mut ips = resolve_host_trust_dns(host).await;
+    if ips.is_empty() {
+        ips = resolve_host_system(host).await;
+    }
+
+    dedup_ips(ips)
+}
+
+async fn resolve_host_trust_dns(host: &str) -> Vec<IpAddr> {
     use trust_dns_resolver::config::*;
     use trust_dns_resolver::TokioAsyncResolver;
 
     let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
     match tokio::time::timeout(DNS_LOOKUP_TIMEOUT, resolver.lookup_ip(host)).await {
-        Ok(Ok(ips)) => ips.iter().next(),
-        Ok(Err(_)) | Err(_) => None,
+        Ok(Ok(ips)) => ips.iter().collect(),
+        Ok(Err(_)) | Err(_) => Vec::new(),
     }
+}
+
+async fn resolve_host_system(host: &str) -> Vec<IpAddr> {
+    let host = host.to_string();
+    let lookup = tokio::time::timeout(
+        DNS_LOOKUP_TIMEOUT,
+        tokio::task::spawn_blocking(move || (host.as_str(), 0).to_socket_addrs()),
+    )
+    .await;
+
+    match lookup {
+        Ok(Ok(Ok(addrs))) => addrs.map(|addr| addr.ip()).collect(),
+        Ok(Ok(Err(_))) | Ok(Err(_)) | Err(_) => Vec::new(),
+    }
+}
+
+fn dedup_ips(ips: Vec<IpAddr>) -> Vec<IpAddr> {
+    let mut seen = HashSet::new();
+    ips.into_iter().filter(|ip| seen.insert(*ip)).collect()
 }
 
 /// 计算 min/max/avg 统计（消除 ping 和 connectivity 的重复）

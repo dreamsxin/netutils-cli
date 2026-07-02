@@ -8,7 +8,6 @@ use serde::Serialize;
 use crate::i18n::{t, t1, t2};
 use crate::output::{print_json, OutputMode};
 
-const DIAG_DNS_TIMEOUT: Duration = Duration::from_secs(5);
 const DIAG_GATEWAY_TIMEOUT: Duration = Duration::from_secs(2);
 const DIAG_IPV6_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -124,53 +123,34 @@ async fn check_egress() -> DiagItem {
 
 /// 检测单个域名的 DNS 解析
 async fn check_dns_single(domain: &str) -> DiagItem {
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::TokioAsyncResolver;
-
     let is_cn = domain == "baidu.com";
     let check_label = if is_cn {
         "diag.dns_cn"
     } else {
         "diag.dns_global"
     };
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
     let start = Instant::now();
 
-    match tokio::time::timeout(DIAG_DNS_TIMEOUT, resolver.lookup_ip(domain)).await {
-        Ok(Ok(ips)) => {
-            if let Some(ip) = ips.iter().next() {
-                let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-                let msg = t("diag.dns_ok")
-                    .replace("{0}", domain)
-                    .replace("{1}", &ip.to_string())
-                    .replace("{2}", &format!("{:.0}", elapsed));
-                DiagItem {
-                    check: t(check_label),
-                    ok: true,
-                    warning: false,
-                    message: msg,
-                }
-            } else {
-                DiagItem {
-                    check: t(check_label),
-                    ok: false,
-                    warning: false,
-                    message: t1("diag.dns_fail", domain),
-                }
-            }
+    let ips = crate::util::resolve_host_all(domain).await;
+    if let Some(ip) = ips.first() {
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        let msg = t("diag.dns_ok")
+            .replace("{0}", domain)
+            .replace("{1}", &ip.to_string())
+            .replace("{2}", &format!("{:.0}", elapsed));
+        DiagItem {
+            check: t(check_label),
+            ok: true,
+            warning: false,
+            message: msg,
         }
-        Ok(Err(e)) => DiagItem {
+    } else {
+        DiagItem {
             check: t(check_label),
             ok: false,
             warning: false,
-            message: t1("diag.dns_fail", &e.to_string()),
-        },
-        Err(_) => DiagItem {
-            check: t(check_label),
-            ok: false,
-            warning: false,
-            message: t1("diag.dns_fail", "timeout"),
-        },
+            message: t1("diag.dns_fail", domain),
+        }
     }
 }
 

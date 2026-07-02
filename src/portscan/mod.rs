@@ -44,6 +44,7 @@ const COMMON_PORTS: &[(u16, &str)] = &[
 pub struct PortResult {
     pub port: u16,
     pub open: bool,
+    pub ip: Option<String>,
     pub service: String,
 }
 
@@ -61,19 +62,22 @@ pub struct ScanOutput {
 pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: OutputMode) {
     let concurrency = concurrency.max(1);
 
-    // 解析主机
-    let target = match crate::util::resolve_host(host).await {
-        Some(ip) => ip,
-        None => {
-            let msg = t1("scan.resolve_fail", host);
-            if mode == OutputMode::Json {
-                print_json_error(&msg);
-            } else {
-                println!("  {}", msg.red());
-            }
-            return;
+    // 解析主机；多 A 记录域名对每个端口尝试多个候选 IP，避免单个后端异常导致误判。
+    let targets = crate::util::resolve_host_all(host).await;
+    if targets.is_empty() {
+        let msg = t1("scan.resolve_fail", host);
+        if mode == OutputMode::Json {
+            print_json_error(&msg);
+        } else {
+            println!("  {}", msg.red());
         }
-    };
+        return;
+    }
+    let target_label = targets
+        .iter()
+        .map(IpAddr::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let port_list: Vec<u16> = match ports {
         Some(p) => p.to_vec(),
@@ -86,9 +90,10 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     for port in &port_list {
         let permit = semaphore.clone();
         let port = *port;
+        let targets = targets.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire_owned().await.unwrap();
-            scan_port(target, port).await
+            scan_port(&targets, port).await
         }));
     }
 
@@ -104,7 +109,7 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     let open_count = results.iter().filter(|r| r.open).count();
     let output = ScanOutput {
         host: host.to_string(),
-        target: target.to_string(),
+        target: target_label.clone(),
         total_scanned: results.len(),
         open_count,
         results: results.clone(),
@@ -118,7 +123,7 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     // 表格输出
     println!();
     println!("{}", t1("scan.title", host).bold());
-    println!("  {}", t2("scan.target", host, &target.to_string()));
+    println!("  {}", t2("scan.target", host, &target_label));
     println!(
         "  {}",
         t2(
@@ -135,14 +140,21 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
         println!("  {}", t("scan.no_open").yellow());
     } else {
         let h_port = t("scan.port");
+        let h_ip = t("trace.ip");
         let h_state = t("scan.state");
         let h_svc = t("scan.service");
-        let headers = [h_port.as_str(), h_state.as_str(), h_svc.as_str()];
+        let headers = [
+            h_port.as_str(),
+            h_ip.as_str(),
+            h_state.as_str(),
+            h_svc.as_str(),
+        ];
         let rows: Vec<Vec<String>> = open
             .iter()
             .map(|r| {
                 vec![
                     r.port.to_string(),
+                    r.ip.clone().unwrap_or_else(|| "--".to_string()),
                     "open".green().to_string(),
                     r.service.to_string(),
                 ]
@@ -163,20 +175,30 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
 }
 
 /// 扫描单个端口
-async fn scan_port(target: IpAddr, port: u16) -> PortResult {
-    let addr = SocketAddr::new(target, port);
-    let result = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await;
-
-    let open = result.map(|r| r.is_ok()).unwrap_or(false);
+async fn scan_port(targets: &[IpAddr], port: u16) -> PortResult {
     let service = COMMON_PORTS
         .iter()
         .find(|(p, _)| *p == port)
         .map(|(_, s)| *s)
         .unwrap_or("unknown");
 
+    for target in targets.iter().copied().take(8) {
+        let addr = SocketAddr::new(target, port);
+        let result = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await;
+        if result.map(|r| r.is_ok()).unwrap_or(false) {
+            return PortResult {
+                port,
+                open: true,
+                ip: Some(target.to_string()),
+                service: service.to_string(),
+            };
+        }
+    }
+
     PortResult {
         port,
-        open,
+        open: false,
+        ip: None,
         service: service.to_string(),
     }
 }

@@ -268,6 +268,11 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
             "⚠ 未在 {0} 跳内到达目标",
             "⚠ Did not reach target within {0} hops",
         ),
+        (
+            "trace.stopped_no_response",
+            "⚠ 连续 {0} 跳无响应，已提前停止",
+            "⚠ Stopped after {0} consecutive unresponsive hops",
+        ),
         ("trace.hop", "跳数", "Hop"),
         ("trace.ip", "IP 地址", "IP Address"),
         ("trace.probe", "延迟 {0}", "Probe {0}"),
@@ -470,9 +475,24 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ),
         ("diagnose.tcp_ok", "连接成功 ({0}ms)", "Connected ({0}ms)"),
         (
+            "diagnose.tcp_ok_detail",
+            "端口 {0} 连接成功: {1} ({2}ms)",
+            "Port {0} connected: {1} ({2}ms)",
+        ),
+        (
+            "diagnose.tcp_fallback_ok",
+            "端口 {0} 不通，但端口 {1} 可达: {2} ({3}ms)",
+            "Port {0} failed, but port {1} is reachable: {2} ({3}ms)",
+        ),
+        (
             "diagnose.tcp_fail",
             "连接失败: {0}",
             "Connection failed: {0}",
+        ),
+        (
+            "diagnose.tcp_fail_targets",
+            "连接失败: {0} 在 {1}s 内无可用 TCP 端口",
+            "Connection failed: no reachable TCP port on {0} within {1}s",
         ),
         (
             "diagnose.https_ok",
@@ -483,6 +503,11 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
             "diagnose.https_fail",
             "失败: {0} [{1}]",
             "Failed: {0} [{1}]",
+        ),
+        (
+            "diagnose.https_http_fallback_ok",
+            "HTTPS 失败: {0}; HTTP 可达: {1} → {2} ({3}ms) [{4}]",
+            "HTTPS failed: {0}; HTTP reachable: {1} → {2} ({3}ms) [{4}]",
         ),
         (
             "diagnose.trace_reached",

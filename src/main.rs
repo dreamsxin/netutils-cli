@@ -8,6 +8,7 @@ mod i18n;
 mod icmp;
 mod info;
 mod output;
+mod path;
 mod ping;
 mod portscan;
 mod table;
@@ -71,6 +72,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Diag) => diag::run(mode).await,
         Some(Commands::Diagnose { host }) => diagnose::run(&host, mode).await,
+        Some(Commands::Path { url, max_hops, timeout, proxy, no_proxy }) => {
+            path::run(&url, max_hops, Duration::from_secs(timeout), proxy, no_proxy, mode).await
+        }
     }
 
     Ok(())

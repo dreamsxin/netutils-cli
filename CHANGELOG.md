@@ -2,6 +2,20 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.3.10] - 2026-07-02
+
+### 新增
+- 新增 `path` 命令，展示 HTTP 请求的本机视角链路：DNS、多 IP、代理、出口、traceroute、重定向和 DNS/TCP/TLS/TTFB 分阶段耗时
+- `path` 支持 `--json`、`--max-hops`、`--timeout`、`--proxy` 和 `--no-proxy`
+
+### 修复
+- 修复 `trace myip.ipipv.com` 在大量无响应跳点时长时间无输出的问题，普通输出改为逐跳显示并显式刷新
+- 修复 `diagnose` 对多 A 记录域名各步骤解析到不同 IP 导致 TCP/HTTPS 误报的问题
+- 修复 macOS `ifconfig` 解析把 `ether`、`media`、`status`、`inet6` 等属性行误当接口的问题
+- `scan`、`check --timing`、`diag` 统一使用多 IP 解析，降低 CDN/多后端域名误判
+- `dns` 查询增加硬超时，避免不可达 DNS server 长时间等待
+- Linux/macOS `connections` 外部命令增加超时，避免系统命令异常导致卡住
+
 ## [0.3.9] - 2026-07-02
 
 ### 优化

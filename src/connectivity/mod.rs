@@ -541,50 +541,47 @@ async fn run_http_timing(
     let t0 = Instant::now();
 
     // ① DNS
-    let ip = match crate::util::resolve_host(&host).await {
-        Some(ip) => ip,
+    let ips = crate::util::resolve_host_all(&host).await;
+    if ips.is_empty() {
+        return CheckProbe {
+            success: false,
+            rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
+            status_code: None,
+            error: Some("DNS resolve failed".to_string()),
+            timing: None,
+        };
+    }
+    let dns_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ② TCP Connect
+    let t1 = Instant::now();
+    let mut last_tcp_error = None;
+    let mut tcp_stream = None;
+    for ip in ips.iter().copied().take(8) {
+        let tcp_result = tokio::time::timeout(timeout, TcpStream::connect((ip, port))).await;
+        match tcp_result {
+            Ok(Ok(s)) => {
+                tcp_stream = Some(s);
+                break;
+            }
+            Ok(Err(e)) => last_tcp_error = Some(format!("TCP: {}", e)),
+            Err(_) => last_tcp_error = Some("TCP: timeout".to_string()),
+        }
+    }
+    let tcp_stream = match tcp_stream {
+        Some(s) => s,
         None => {
             return CheckProbe {
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
-                error: Some("DNS resolve failed".to_string()),
-                timing: None,
-            };
-        }
-    };
-    let dns_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-    // ② TCP Connect
-    let t1 = Instant::now();
-    let tcp_result = tokio::time::timeout(timeout, TcpStream::connect((ip, port))).await;
-    let tcp_stream = match tcp_result {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => {
-            return CheckProbe {
-                success: false,
-                rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
-                status_code: None,
-                error: Some(format!("TCP: {}", e)),
+                error: last_tcp_error.or_else(|| Some("TCP: failed".to_string())),
                 timing: Some(TimingBreakdown {
                     dns_ms,
                     connect_ms: t1.elapsed().as_secs_f64() * 1000.0,
                     ..Default::default()
                 }),
-            };
-        }
-        Err(_) => {
-            return CheckProbe {
-                success: false,
-                rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
-                status_code: None,
-                error: Some("TCP: timeout".to_string()),
-                timing: Some(TimingBreakdown {
-                    dns_ms,
-                    connect_ms: t1.elapsed().as_secs_f64() * 1000.0,
-                    ..Default::default()
-                }),
-            };
+            }
         }
     };
     let connect_ms = t1.elapsed().as_secs_f64() * 1000.0;
