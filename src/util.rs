@@ -5,7 +5,6 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 const DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(target_os = "windows")]
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// 延迟统计
@@ -57,24 +56,10 @@ pub fn compute_stats(rtts: &[f64]) -> Stats {
 /// 获取系统代理地址（Windows 注册表 或 环境变量）
 /// 返回格式化的代理 URL，如 "http://127.0.0.1:7897"
 pub fn get_system_proxy_addr() -> Option<String> {
-    // 1. Windows 注册表系统代理
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(proxy) = crate::info::proxy::get_windows_system_proxy() {
-            // ProxyServer 格式可能是 "http=...;https=..." 或 "host:port"
-            for part in proxy.split(';') {
-                let part = part.trim();
-                if let Some(addr) = part.strip_prefix("https=") {
-                    return Some(format_proxy_url(addr));
-                }
-                if let Some(addr) = part.strip_prefix("http=") {
-                    return Some(format_proxy_url(addr));
-                }
-            }
-            // 没有协议前缀，整体作为 host:port
-            if !proxy.contains('=') {
-                return Some(format_proxy_url(&proxy));
-            }
+    // 1. 平台系统代理（Windows 注册表、macOS 系统设置、Linux 桌面环境设置等）
+    if let Some(proxy) = crate::info::proxy::get_platform_system_proxy() {
+        if let Some(addr) = proxy_to_url(&proxy) {
+            return Some(addr);
         }
     }
 
@@ -88,6 +73,25 @@ pub fn get_system_proxy_addr() -> Option<String> {
     }
 
     None
+}
+
+fn proxy_to_url(proxy: &str) -> Option<String> {
+    // ProxyServer / scutil / gsettings 统一输出可能是
+    // "http=host:port;https=host:port;socks=socks5h://host:port" 或 "host:port"。
+    for key in ["https=", "http=", "socks="] {
+        for part in proxy.split(';') {
+            let part = part.trim();
+            if let Some(addr) = part.strip_prefix(key) {
+                return Some(format_proxy_url(addr));
+            }
+        }
+    }
+
+    if !proxy.contains('=') {
+        Some(format_proxy_url(proxy))
+    } else {
+        None
+    }
 }
 
 /// 将代理地址格式化为完整 URL
@@ -144,8 +148,7 @@ pub fn powershell_output(script: &str, timeout: Duration) -> Option<std::process
     )
 }
 
-#[cfg(target_os = "windows")]
-fn command_output_timeout(
+pub fn command_output_timeout(
     program: &str,
     args: &[&str],
     timeout: Duration,

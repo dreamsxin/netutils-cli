@@ -2,6 +2,13 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.3.7] - 2026-07-02
+
+### 新增
+- macOS 读取“系统设置/系统偏好设置”的网络代理配置（HTTP/HTTPS/SOCKS/PAC/自动发现），用于 `proxy`、`diag`、`diagnose` 和 HTTP 连通性检测
+- Linux 读取 GNOME 系统代理配置（manual/auto），并继续保留环境变量兜底
+- 统一系统代理解析入口，Windows/macOS/Linux 自动代理检测使用同一套逻辑
+
 ## [0.3.6] - 2026-07-02
 
 ### 修复
