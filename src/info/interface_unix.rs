@@ -184,13 +184,19 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     let mut current_name = String::new();
     let mut current_mac = String::from("--");
     let mut current_ipv4 = String::from("--");
-    let mut current_status = "Down".to_string();
     let mut is_up = false;
 
     for line in text.lines() {
         let line = line.trim();
         // 接口行: "en0: flags=..."
-        if !line.is_empty() && line.chars().next().map(|c| c.is_alphanumeric()).unwrap_or(false) && line.contains(':') {
+        if !line.is_empty()
+            && line
+                .chars()
+                .next()
+                .map(|c| c.is_alphanumeric())
+                .unwrap_or(false)
+            && line.contains(':')
+        {
             // 保存前一个
             if !current_name.is_empty() && current_name != "lo0" {
                 let iftype = classify_interface(&current_name, &current_name);
@@ -227,7 +233,7 @@ fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     if !current_name.is_empty() && current_name != "lo0" {
         let iftype = classify_interface(&current_name, &current_name);
         interfaces.push(InterfaceInfo {
-            name: current_name,
+            name: current_name.clone(),
             mac: current_mac,
             ipv4: current_ipv4,
             status: if is_up { "Up" } else { "Down" }.to_string(),
