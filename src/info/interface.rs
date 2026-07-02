@@ -85,6 +85,17 @@ impl IfaceType {
             IfaceType::Ethernet | IfaceType::Wireless | IfaceType::Loopback | IfaceType::Other
         )
     }
+
+    pub fn is_tun_like(&self) -> bool {
+        matches!(
+            self,
+            IfaceType::MihomoTun
+                | IfaceType::ClashTun
+                | IfaceType::Wireguard
+                | IfaceType::Openvpn
+                | IfaceType::TunTap
+        )
+    }
 }
 
 /// 根据描述和名称识别接口类型
@@ -110,7 +121,12 @@ pub fn classify_interface(desc: &str, name: &str) -> IfaceType {
         IfaceType::Hyperv
     } else if desc_lower.contains("docker") {
         IfaceType::Docker
-    } else if desc_lower.contains("tun") || desc_lower.contains("tap") {
+    } else if desc_lower.contains("tun")
+        || desc_lower.contains("tap")
+        || name_lower.starts_with("utun")
+        || name_lower.starts_with("tun")
+        || name_lower.starts_with("tap")
+    {
         IfaceType::TunTap
     } else if desc_lower.contains("wireless")
         || desc_lower.contains("wi-fi")

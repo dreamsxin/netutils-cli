@@ -17,15 +17,15 @@ mod interface_unix;
 mod route_unix;
 
 // 平台分发
-#[cfg(target_os = "windows")]
-pub use interface_win::get_all_interfaces;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use interface_unix::get_all_interfaces;
-
 #[cfg(target_os = "windows")]
-pub use route_win::{get_default_routes, get_route_table};
+pub use interface_win::get_all_interfaces;
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use route_unix::{get_default_routes, get_route_table};
+#[cfg(target_os = "windows")]
+pub use route_win::{get_default_routes, get_route_table};
 
 use colored::*;
 use serde::Serialize;
@@ -34,10 +34,10 @@ use crate::i18n::{t, t2, t4};
 use crate::output::{print_json, OutputMode};
 use crate::table::print_table;
 
-use egress::{detect_egress_ip, find_egress_interface};
+use egress::{detect_egress_interface, detect_egress_ip, find_egress_interface};
 use interface::{classify_interface, InterfaceInfo};
-use route::RouteEntry;
 use proxy::{get_proxy_info, ProxyEntry};
+use route::RouteEntry;
 
 // ═══════════════════════════════════════════════════════════════
 //  数据结构（供 JSON 序列化）
@@ -50,6 +50,7 @@ pub struct EgressInfo {
     pub ip: String,
     pub iftype: String,
     pub metric: u32,
+    pub tun_mode: bool,
 }
 
 /// 全量信息
@@ -69,7 +70,8 @@ pub struct AllInfo {
 pub fn collect_interfaces() -> Vec<InterfaceInfo> {
     let mut interfaces = get_all_interfaces();
     let egress_ip = detect_egress_ip();
-    let egress_iface = egress_ip.and_then(|ip| find_egress_interface(&ip, &interfaces));
+    let egress_iface = detect_egress_interface()
+        .or_else(|| egress_ip.and_then(|ip| find_egress_interface(&ip, &interfaces)));
 
     let default_routes = get_default_routes();
     let default_route_ifaces: Vec<&str> = default_routes
@@ -87,15 +89,21 @@ pub fn collect_interfaces() -> Vec<InterfaceInfo> {
 
 /// 收集出口信息
 pub fn collect_egress(interfaces: &[InterfaceInfo]) -> Option<EgressInfo> {
-    let egress_ip = detect_egress_ip()?;
-    let interfaces_full = get_all_interfaces();
-    let egress_iface = find_egress_interface(&egress_ip, &interfaces_full)?;
+    let egress_ip = detect_egress_ip();
+    let egress_iface = detect_egress_interface().or_else(|| {
+        let ip = egress_ip?;
+        let interfaces_full = get_all_interfaces();
+        find_egress_interface(&ip, &interfaces_full)
+    })?;
     let iface = interfaces.iter().find(|i| i.name == egress_iface)?;
     Some(EgressInfo {
         interface: iface.name.clone(),
-        ip: iface.ipv4.clone(),
+        ip: egress_ip
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| iface.ipv4.clone()),
         iftype: iface.iftype.clone(),
         metric: iface.metric,
+        tun_mode: classify_interface(&iface.description, &iface.name).is_tun_like(),
     })
 }
 
@@ -191,7 +199,11 @@ pub fn print_interfaces(mode: OutputMode) {
     let virtual_count = interfaces.iter().filter(|i| i.is_virtual).count();
     println!(
         "  {}",
-        t2("iface.summary", &interfaces.len().to_string(), &virtual_count.to_string())
+        t2(
+            "iface.summary",
+            &interfaces.len().to_string(),
+            &virtual_count.to_string()
+        )
     );
 }
 
@@ -214,7 +226,21 @@ pub fn print_egress(mode: OutputMode) {
             println!("  {}: {}", t("egress.iface"), info.interface.green());
             println!("  {}:    {}", t("egress.ip"), info.ip.yellow());
             println!("  {}:  {}", t("egress.type"), iftype_enum.to_label());
-            println!("  {}:  {} ({})", t("egress.metric"), info.metric, t("egress.metric_hint"));
+            println!(
+                "  {}:   {}",
+                t("egress.tun_mode"),
+                if info.tun_mode {
+                    t("common.yes").green()
+                } else {
+                    t("common.no").normal()
+                }
+            );
+            println!(
+                "  {}:  {} ({})",
+                t("egress.metric"),
+                info.metric,
+                t("egress.metric_hint")
+            );
             println!();
             println!("  ┌─ {}", t("egress.logic_title"));
             println!("  │  {}", t("egress.logic_1"));
@@ -226,7 +252,7 @@ pub fn print_egress(mode: OutputMode) {
                 t4(
                     "egress.logic_selected",
                     &info.interface,
-                    "0",            // 路由跃点
+                    "0",                      // 路由跃点
                     &info.metric.to_string(), // 接口跃点
                     &info.metric.to_string()  // 有效跃点
                 )
@@ -254,7 +280,12 @@ pub fn print_routes(mode: OutputMode) {
     let h_gw = t("route.gateway");
     let h_iface = t("route.interface");
     let h_metric = t("route.metric");
-    let headers = [h_dest.as_str(), h_gw.as_str(), h_iface.as_str(), h_metric.as_str()];
+    let headers = [
+        h_dest.as_str(),
+        h_gw.as_str(),
+        h_iface.as_str(),
+        h_metric.as_str(),
+    ];
     let rows: Vec<Vec<String>> = routes
         .iter()
         .map(|r| {

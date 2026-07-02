@@ -111,10 +111,8 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("common.no", "否", "no"),
         ("common.none", "--", "--"),
         ("common.metric", "指标", "Metric"),
-
         // ── banner ──
         ("banner.title", "本地网络检测报告", "Local Network Report"),
-
         // ── iface ──
         ("iface.title", "📡 网络接口列表", "📡 Network Interfaces"),
         ("iface.name", "名称", "Name"),
@@ -126,8 +124,11 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("iface.egress", "出口", "Egress"),
         ("iface.egress_yes", "✓ 出口", "✓ egress"),
         ("iface.egress_backup", "~ 备用", "~ backup"),
-        ("iface.summary", "共 {0} 个接口，其中 {1} 个虚拟网卡", "{0} interfaces, {1} virtual"),
-
+        (
+            "iface.summary",
+            "共 {0} 个接口，其中 {1} 个虚拟网卡",
+            "{0} interfaces, {1} virtual",
+        ),
         // ── iface types ──
         ("iface.type_loopback", "回环", "Loopback"),
         ("iface.type_ethernet", "以太网", "Ethernet"),
@@ -145,28 +146,54 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("iface.type_docker", "Docker", "Docker"),
         ("iface.type_tuntap", "TUN/TAP", "TUN/TAP"),
         ("iface.type_other", "其他", "Other"),
-
         // ── egress ──
         ("egress.title", "🚪 流量出口", "🚪 Egress"),
         ("egress.iface", "接口", "Interface"),
         ("egress.ip", "IP", "IP"),
         ("egress.type", "类型", "Type"),
+        ("egress.tun_mode", "TUN 模式", "TUN Mode"),
         ("egress.metric", "跃点", "Metric"),
-        ("egress.metric_hint", "接口跃点，越小优先级越高", "interface metric, lower = higher priority"),
+        (
+            "egress.metric_hint",
+            "接口跃点，越小优先级越高",
+            "interface metric, lower = higher priority",
+        ),
         ("egress.logic_title", "选路逻辑", "Routing Logic"),
-        ("egress.logic_1", "系统为出站流量选择出口时，比较每个候选路由的 有效跃点：", "System selects egress by comparing effective metric of each candidate route:"),
-        ("egress.logic_2", "有效跃点 = 路由跃点(RouteMetric) + 接口跃点(InterfaceMetric)", "Effective Metric = RouteMetric + InterfaceMetric"),
-        ("egress.logic_3", "有效跃点越低，接口越优先。", "Lower effective metric = higher priority."),
-        ("egress.logic_selected", "{0} 的有效跃点 = 路由跃点({1}) + 接口跃点({2}) = {3}，选中", "{0} effective metric = route({1}) + interface({2}) = {3}, selected"),
-        ("egress.unreachable", "无法检测（可能无网络连接）", "Unable to detect (no network connection?)"),
-
+        (
+            "egress.logic_1",
+            "系统为出站流量选择出口时，比较每个候选路由的 有效跃点：",
+            "System selects egress by comparing effective metric of each candidate route:",
+        ),
+        (
+            "egress.logic_2",
+            "有效跃点 = 路由跃点(RouteMetric) + 接口跃点(InterfaceMetric)",
+            "Effective Metric = RouteMetric + InterfaceMetric",
+        ),
+        (
+            "egress.logic_3",
+            "有效跃点越低，接口越优先。",
+            "Lower effective metric = higher priority.",
+        ),
+        (
+            "egress.logic_selected",
+            "{0} 的有效跃点 = 路由跃点({1}) + 接口跃点({2}) = {3}，选中",
+            "{0} effective metric = route({1}) + interface({2}) = {3}, selected",
+        ),
+        (
+            "egress.unreachable",
+            "无法检测（可能无网络连接）",
+            "Unable to detect (no network connection?)",
+        ),
         // ── route ──
-        ("route.title", "🗺️  路由表 (默认路由优先)", "🗺️  Routing Table (default first)"),
+        (
+            "route.title",
+            "🗺️  路由表 (默认路由优先)",
+            "🗺️  Routing Table (default first)",
+        ),
         ("route.dest", "目标", "Destination"),
         ("route.gateway", "网关", "Gateway"),
         ("route.interface", "接口", "Interface"),
         ("route.metric", "跃点", "Metric"),
-
         // ── proxy ──
         ("proxy.title", "🔒 代理设置", "🔒 Proxy Settings"),
         ("proxy.type", "类型", "Type"),
@@ -178,14 +205,29 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("proxy.env", "环境变量", "Env Variables"),
         ("proxy.system", "系统代理", "System Proxy"),
         ("proxy.disabled", "未启用", "disabled"),
-
         // ── ping ──
         ("ping.title", "🏓 Ping {0}", "🏓 Ping {0}"),
-        ("ping.resolve_fail", "❌ 无法解析主机: {0}", "❌ Failed to resolve host: {0}"),
+        (
+            "ping.resolve_fail",
+            "❌ 无法解析主机: {0}",
+            "❌ Failed to resolve host: {0}",
+        ),
         ("ping.target", "目标: {0} ({1})", "Target: {0} ({1})"),
-        ("ping.icmp_fallback", "⚠ ICMP 不可用，回退到 TCP ping (端口 80)", "⚠ ICMP unavailable, falling back to TCP ping (port 80)"),
-        ("ping.client_fail", "ICMP client 创建失败: {0}", "ICMP client creation failed: {0}"),
-        ("ping.reply", "seq={0} 来自 {1} 时间={2}ms", "seq={0} from {1} time={2}ms"),
+        (
+            "ping.icmp_fallback",
+            "⚠ ICMP 不可用，回退到 TCP ping (端口 80)",
+            "⚠ ICMP unavailable, falling back to TCP ping (port 80)",
+        ),
+        (
+            "ping.client_fail",
+            "ICMP client 创建失败: {0}",
+            "ICMP client creation failed: {0}",
+        ),
+        (
+            "ping.reply",
+            "seq={0} 来自 {1} 时间={2}ms",
+            "seq={0} from {1} time={2}ms",
+        ),
         ("ping.timeout", "TCP: 超时", "TCP: timeout"),
         ("ping.fail", "seq={0} 失败: {1}", "seq={0} failed: {1}"),
         ("ping.stats", "📊 统计", "📊 Statistics"),
@@ -196,48 +238,96 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("ping.min", "最小延迟", "Min"),
         ("ping.max", "最大延迟", "Max"),
         ("ping.avg", "平均延迟", "Avg"),
-
         // ── dns ──
-        ("dns.title", "🔍 DNS 查询: {0} ({1})", "🔍 DNS Query: {0} ({1})"),
+        (
+            "dns.title",
+            "🔍 DNS 查询: {0} ({1})",
+            "🔍 DNS Query: {0} ({1})",
+        ),
         ("dns.no_record", "未找到 {0} 记录", "No {0} records found"),
         ("dns.fail", "❌ 查询失败: {0}", "❌ Query failed: {0}"),
         ("dns.elapsed", "查询耗时: {0}ms", "Elapsed: {0}ms"),
         ("dns.idx", "序号", "#"),
         ("dns.value", "记录值", "Value"),
         ("dns.ttl", "TTL", "TTL"),
-
         // ── trace ──
-        ("trace.title", "🛤️  Traceroute to {0}", "🛤️  Traceroute to {0}"),
-        ("trace.resolve_fail", "❌ 无法解析主机: {0}", "❌ Failed to resolve host: {0}"),
+        (
+            "trace.title",
+            "🛤️  Traceroute to {0}",
+            "🛤️  Traceroute to {0}",
+        ),
+        (
+            "trace.resolve_fail",
+            "❌ 无法解析主机: {0}",
+            "❌ Failed to resolve host: {0}",
+        ),
         ("trace.target", "目标: {0} ({1})", "Target: {0} ({1})"),
         ("trace.max_hops", "最大跳数: {0}", "Max hops: {0}"),
-        ("trace.not_reached", "⚠ 未在 {0} 跳内到达目标", "⚠ Did not reach target within {0} hops"),
+        (
+            "trace.not_reached",
+            "⚠ 未在 {0} 跳内到达目标",
+            "⚠ Did not reach target within {0} hops",
+        ),
         ("trace.hop", "跳数", "Hop"),
         ("trace.ip", "IP 地址", "IP Address"),
         ("trace.probe", "延迟 {0}", "Probe {0}"),
-
         // ── scan ──
         ("scan.title", "🔎 端口扫描: {0}", "🔎 Port Scan: {0}"),
-        ("scan.resolve_fail", "❌ 无法解析主机: {0}", "❌ Failed to resolve host: {0}"),
+        (
+            "scan.resolve_fail",
+            "❌ 无法解析主机: {0}",
+            "❌ Failed to resolve host: {0}",
+        ),
         ("scan.target", "目标: {0} ({1})", "Target: {0} ({1})"),
-        ("scan.info", "扫描 {0} 个端口，并发 {1}", "Scanning {0} ports, concurrency {1}"),
+        (
+            "scan.info",
+            "扫描 {0} 个端口，并发 {1}",
+            "Scanning {0} ports, concurrency {1}",
+        ),
         ("scan.no_open", "未发现开放端口", "No open ports found"),
         ("scan.done", "扫描完成: {0}/{1} 开放", "Done: {0}/{1} open"),
         ("scan.port", "端口", "Port"),
         ("scan.state", "状态", "State"),
         ("scan.service", "服务", "Service"),
-
         // ── check ──
         ("check.title", "🔌 连通性测试: {0}", "🔌 Connectivity: {0}"),
-        ("check.format_err", "❌ 格式错误，请使用 host:port", "❌ Invalid format, use host:port"),
-        ("check.port_err", "❌ 端口号无效: {0}", "❌ Invalid port: {0}"),
+        (
+            "check.format_err",
+            "❌ 格式错误，请使用 host:port",
+            "❌ Invalid format, use host:port",
+        ),
+        (
+            "check.port_err",
+            "❌ 端口号无效: {0}",
+            "❌ Invalid port: {0}",
+        ),
         ("check.tcp", "类型: TCP", "Type: TCP"),
         ("check.http", "类型: HTTP", "Type: HTTP"),
-        ("check.tcp_ok", "[{0}/{1}] ✓ 连接成功  {2}ms", "[{0}/{1}] ✓ connected  {2}ms"),
-        ("check.tcp_fail", "[{0}/{1}] ✗ 连接失败  {2}", "[{0}/{1}] ✗ failed  {2}"),
-        ("check.tcp_timeout", "[{0}/{1}] ✗ 连接超时 ({2}s)", "[{0}/{1}] ✗ timeout ({2}s)"),
-        ("check.http_ok", "[{0}/{1}] {2} {3}  {4}ms", "[{0}/{1}] {2} {3}  {4}ms"),
-        ("check.http_fail", "[{0}/{1}] ✗ {2}  {3}ms", "[{0}/{1}] ✗ {2}  {3}ms"),
+        (
+            "check.tcp_ok",
+            "[{0}/{1}] ✓ 连接成功  {2}ms",
+            "[{0}/{1}] ✓ connected  {2}ms",
+        ),
+        (
+            "check.tcp_fail",
+            "[{0}/{1}] ✗ 连接失败  {2}",
+            "[{0}/{1}] ✗ failed  {2}",
+        ),
+        (
+            "check.tcp_timeout",
+            "[{0}/{1}] ✗ 连接超时 ({2}s)",
+            "[{0}/{1}] ✗ timeout ({2}s)",
+        ),
+        (
+            "check.http_ok",
+            "[{0}/{1}] {2} {3}  {4}ms",
+            "[{0}/{1}] {2} {3}  {4}ms",
+        ),
+        (
+            "check.http_fail",
+            "[{0}/{1}] ✗ {2}  {3}ms",
+            "[{0}/{1}] ✗ {2}  {3}ms",
+        ),
         ("check.conn_fail", "连接失败", "connection failed"),
         ("check.req_timeout", "请求超时", "request timeout"),
         ("check.count", "测试次数", "Tests"),
@@ -249,16 +339,23 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("check.timing_tls", "TLS 握手", "TLS"),
         ("check.timing_ttfb", "首字节", "TTFB"),
         ("check.timing_total", "总计", "Total"),
-        ("check.timing_unsupported", "（代理/HTTP 模式不支持分解，仅直连 HTTPS 可用）", "(breakdown unavailable with proxy/HTTP, direct HTTPS only)"),
+        (
+            "check.timing_unsupported",
+            "（代理/HTTP 模式不支持分解，仅直连 HTTPS 可用）",
+            "(breakdown unavailable with proxy/HTTP, direct HTTPS only)",
+        ),
         ("check.concurrency", "并发数", "Concurrency"),
         ("check.total_reqs", "总请求数", "Total Requests"),
         ("check.success_reqs", "成功请求", "Successful"),
         ("check.fail_reqs", "失败请求", "Failed"),
         ("check.qps", "吞吐 (QPS)", "Throughput (QPS)"),
-
         // ── diag ──
         // ── connections ──
-        ("connections.title", "📡 活动网络连接", "📡 Active Network Connections"),
+        (
+            "connections.title",
+            "📡 活动网络连接",
+            "📡 Active Network Connections",
+        ),
         ("connections.proto", "协议", "Protocol"),
         ("connections.local", "本地地址", "Local Address"),
         ("connections.remote", "远程地址", "Remote Address"),
@@ -266,10 +363,21 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("connections.pid", "PID", "PID"),
         ("connections.process", "进程", "Process"),
         ("connections.proxy_col", "代理", "Proxy"),
-        ("connections.no_result", "未找到连接", "No connections found"),
-        ("connections.summary", "共 {0} 个连接（{1} TCP, {2} UDP）", "{0} connections ({1} TCP, {2} UDP)"),
-        ("connections.no_admin", "注意：非管理员权限下进程信息可能不完整", "Note: process info may be incomplete without admin privileges"),
-
+        (
+            "connections.no_result",
+            "未找到连接",
+            "No connections found",
+        ),
+        (
+            "connections.summary",
+            "共 {0} 个连接（{1} TCP, {2} UDP）",
+            "{0} connections ({1} TCP, {2} UDP)",
+        ),
+        (
+            "connections.no_admin",
+            "注意：非管理员权限下进程信息可能不完整",
+            "Note: process info may be incomplete without admin privileges",
+        ),
         // ── diag ──
         ("diag.title", "🔍 网络诊断报告", "🔍 Network Diagnostics"),
         ("diag.running", "正在检测", "Running diagnostics"),
@@ -278,50 +386,149 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("diag.check_gateway", "网关", "Gateway"),
         ("diag.check_proxy", "代理", "Proxy"),
         ("diag.check_ipv6", "IPv6", "IPv6"),
-        ("diag.net_ok", "网络连接正常 (出口: {0} {1})", "Network connected (egress: {0} {1})"),
+        (
+            "diag.net_ok",
+            "网络连接正常 (出口: {0} {1})",
+            "Network connected (egress: {0} {1})",
+        ),
         ("diag.net_fail", "无网络连接", "No network connection"),
-        ("diag.dns_ok", "DNS 解析正常 ({0} → {1}, {2}ms)", "DNS OK ({0} → {1}, {2}ms)"),
+        (
+            "diag.dns_ok",
+            "DNS 解析正常 ({0} → {1}, {2}ms)",
+            "DNS OK ({0} → {1}, {2}ms)",
+        ),
         ("diag.dns_fail", "DNS 解析失败 ({0})", "DNS failed ({0})"),
         ("diag.dns_cn", "国内 DNS", "Domestic DNS"),
         ("diag.dns_global", "国际 DNS", "Global DNS"),
-        ("diag.gw_ok", "默认网关可达 ({0}, {1}ms)", "Gateway reachable ({0}, {1}ms)"),
-        ("diag.gw_ok_no_rtt", "默认网关存在 ({0})", "Gateway found ({0})"),
+        (
+            "diag.gw_ok",
+            "默认网关可达 ({0}, {1}ms)",
+            "Gateway reachable ({0}, {1}ms)",
+        ),
+        (
+            "diag.gw_ok_no_rtt",
+            "默认网关存在 ({0})",
+            "Gateway found ({0})",
+        ),
         ("diag.gw_fail", "默认网关不可达", "Gateway unreachable"),
-        ("diag.proxy_on", "系统代理已启用 ({0})", "System proxy enabled ({0})"),
+        (
+            "diag.proxy_on",
+            "系统代理已启用 ({0})",
+            "System proxy enabled ({0})",
+        ),
         ("diag.proxy_off", "系统代理未启用", "System proxy disabled"),
-        ("diag.http_ok", "HTTPS 连通正常 ({0} → {1}, {2}ms)", "HTTPS OK ({0} → {1}, {2}ms)"),
-        ("diag.http_fail", "HTTPS 连通失败 ({0})", "HTTPS failed ({0})"),
+        (
+            "diag.http_ok",
+            "HTTPS 连通正常 ({0} → {1}, {2}ms)",
+            "HTTPS OK ({0} → {1}, {2}ms)",
+        ),
+        (
+            "diag.http_fail",
+            "HTTPS 连通失败 ({0})",
+            "HTTPS failed ({0})",
+        ),
         ("diag.http_cn", "国内连通", "Domestic HTTP"),
         ("diag.http_global", "国际连通", "Global HTTP"),
         ("diag.via_proxy", "经代理", "via proxy"),
         ("diag.direct", "直连", "direct"),
         ("diag.ipv6_ok", "IPv6 可用", "IPv6 available"),
         ("diag.ipv6_fail", "IPv6 不可用", "IPv6 unavailable"),
-
         // ── diagnose (全链路诊断) ──
-        ("diagnose.title", "🔍 全链路诊断: {0}", "🔍 Link Diagnostics: {0}"),
+        (
+            "diagnose.title",
+            "🔍 全链路诊断: {0}",
+            "🔍 Link Diagnostics: {0}",
+        ),
         ("diagnose.step_dns", "① DNS 解析", "① DNS Resolution"),
         ("diagnose.step_ping", "② Ping 探测", "② Ping Probe"),
         ("diagnose.step_tcp", "③ TCP 端口 {0}", "③ TCP Port {0}"),
         ("diagnose.step_https", "④ HTTPS 请求", "④ HTTPS Request"),
-        ("diagnose.step_trace", "⑤ Traceroute (最多 {0} 跳)", "⑤ Traceroute (max {0} hops)"),
-        ("diagnose.dns_ok", "系统 DNS: {0} → {1} ({2}ms)", "System DNS: {0} → {1} ({2}ms)"),
-        ("diagnose.dns_fail", "DNS 解析失败: {0}", "DNS resolution failed: {0}"),
-        ("diagnose.ping_ok", "{0} 可达 ({1}ms, {2}% 丢包)", "{0} reachable ({1}ms, {2}% loss)"),
-        ("diagnose.ping_fail", "{0} 不可达 (100% 丢包)", "{0} unreachable (100% loss)"),
+        (
+            "diagnose.step_trace",
+            "⑤ Traceroute (最多 {0} 跳)",
+            "⑤ Traceroute (max {0} hops)",
+        ),
+        (
+            "diagnose.dns_ok",
+            "系统 DNS: {0} → {1} ({2}ms)",
+            "System DNS: {0} → {1} ({2}ms)",
+        ),
+        (
+            "diagnose.dns_fail",
+            "DNS 解析失败: {0}",
+            "DNS resolution failed: {0}",
+        ),
+        (
+            "diagnose.ping_ok",
+            "{0} 可达 ({1}ms, {2}% 丢包)",
+            "{0} reachable ({1}ms, {2}% loss)",
+        ),
+        (
+            "diagnose.ping_fail",
+            "{0} 不可达 (100% 丢包)",
+            "{0} unreachable (100% loss)",
+        ),
         ("diagnose.tcp_ok", "连接成功 ({0}ms)", "Connected ({0}ms)"),
-        ("diagnose.tcp_fail", "连接失败: {0}", "Connection failed: {0}"),
-        ("diagnose.https_ok", "{0} → {1} ({2}ms) [{3}]", "{0} → {1} ({2}ms) [{3}]"),
-        ("diagnose.https_fail", "失败: {0} [{1}]", "Failed: {0} [{1}]"),
-        ("diagnose.trace_reached", "到达目标 ({0} 跳)", "Reached target ({0} hops)"),
-        ("diagnose.trace_not_reached", "未到达目标 ({0} 跳内)", "Not reached ({0} hops)"),
-        ("diagnose.trace_skip", "跳过 (需要管理员权限)", "Skipped (requires admin)"),
-        ("diagnose.conclusion", "📍 诊断结论: {0}", "📍 Conclusion: {0}"),
-        ("diagnose.conclusion_dns", "DNS 解析失败，无法解析域名", "DNS resolution failed"),
-        ("diagnose.conclusion_ping", "主机不可达，IP 无法 ping 通", "Host unreachable"),
-        ("diagnose.conclusion_tcp", "TCP 端口不通，端口被封锁或服务未运行", "TCP port unreachable"),
-        ("diagnose.conclusion_https", "HTTPS 失败，可能是 TLS 配置或代理干扰", "HTTPS failed, possible TLS/proxy issue"),
-        ("diagnose.conclusion_healthy", "链路正常，目标可访问", "Link healthy, target accessible"),
+        (
+            "diagnose.tcp_fail",
+            "连接失败: {0}",
+            "Connection failed: {0}",
+        ),
+        (
+            "diagnose.https_ok",
+            "{0} → {1} ({2}ms) [{3}]",
+            "{0} → {1} ({2}ms) [{3}]",
+        ),
+        (
+            "diagnose.https_fail",
+            "失败: {0} [{1}]",
+            "Failed: {0} [{1}]",
+        ),
+        (
+            "diagnose.trace_reached",
+            "到达目标 ({0} 跳)",
+            "Reached target ({0} hops)",
+        ),
+        (
+            "diagnose.trace_not_reached",
+            "未到达目标 ({0} 跳内)",
+            "Not reached ({0} hops)",
+        ),
+        (
+            "diagnose.trace_skip",
+            "跳过 (需要管理员权限)",
+            "Skipped (requires admin)",
+        ),
+        (
+            "diagnose.conclusion",
+            "📍 诊断结论: {0}",
+            "📍 Conclusion: {0}",
+        ),
+        (
+            "diagnose.conclusion_dns",
+            "DNS 解析失败，无法解析域名",
+            "DNS resolution failed",
+        ),
+        (
+            "diagnose.conclusion_ping",
+            "主机不可达，IP 无法 ping 通",
+            "Host unreachable",
+        ),
+        (
+            "diagnose.conclusion_tcp",
+            "TCP 端口不通，端口被封锁或服务未运行",
+            "TCP port unreachable",
+        ),
+        (
+            "diagnose.conclusion_https",
+            "HTTPS 失败，可能是 TLS 配置或代理干扰",
+            "HTTPS failed, possible TLS/proxy issue",
+        ),
+        (
+            "diagnose.conclusion_healthy",
+            "链路正常，目标可访问",
+            "Link healthy, target accessible",
+        ),
         ("diagnose.conclusion_chain", "链路: {0}", "Chain: {0}"),
         ("diagnose.elapsed", "耗时: {0}s", "Time: {0}s"),
         ("diagnose.no_proxy", "直连", "direct"),
@@ -387,7 +594,10 @@ mod tests {
     #[test]
     fn test_t2() {
         init(Some(Lang::En));
-        assert_eq!(t2("ping.target", "host", "1.2.3.4"), "Target: host (1.2.3.4)");
+        assert_eq!(
+            t2("ping.target", "host", "1.2.3.4"),
+            "Target: host (1.2.3.4)"
+        );
     }
 
     #[test]
