@@ -72,6 +72,29 @@ pub enum Commands {
         server: Option<String>,
     },
 
+    /// 检查系统 DNS 缓存，排查代理/TUN 切换后的陈旧解析
+    #[command(alias = "dc")]
+    DnsCache {
+        /// 只检查指定域名；不指定时显示缓存前若干项
+        domain: Option<String>,
+        /// 清理系统 DNS 缓存后再检查
+        #[arg(long)]
+        flush: bool,
+        /// 最多显示多少条缓存记录
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+
+    /// 检查 DNS 查询会发往哪些 DNS server，以及到 DNS server 的本机路由
+    #[command(alias = "dp")]
+    DnsPath {
+        /// 要测试解析的域名；不指定时只显示 DNS server 和路由
+        domain: Option<String>,
+        /// 指定 DNS server，仅检查该 server
+        #[arg(long)]
+        server: Option<String>,
+    },
+
     /// 路由追踪（TTL 递增）
     #[command(alias = "t")]
     Trace {

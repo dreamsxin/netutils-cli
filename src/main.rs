@@ -4,6 +4,8 @@ mod connectivity;
 mod diag;
 mod diagnose;
 mod dns;
+mod dns_cache;
+mod dns_path;
 mod i18n;
 mod icmp;
 mod info;
@@ -46,6 +48,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Dns { domain, r#type, server }) => {
             dns::run(&domain, r#type, server, mode).await
+        }
+        Some(Commands::DnsCache { domain, flush, limit }) => {
+            dns_cache::run(domain, flush, limit, mode).await
+        }
+        Some(Commands::DnsPath { domain, server }) => {
+            dns_path::run(domain, server, mode).await
         }
         Some(Commands::Trace { host, max_hops }) => {
             traceroute::run(&host, max_hops, mode).await
