@@ -1,11 +1,13 @@
 //! Linux/macOS 路由表实现。
 
-use std::process::Command;
+use std::time::Duration;
 
 use super::route::RouteEntry;
 
 #[cfg(any(target_os = "macos", test))]
 use std::collections::HashMap;
+
+const ROUTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 获取默认路由 (网关, 接口名)
 pub fn get_default_routes() -> Vec<(String, String)> {
@@ -14,10 +16,11 @@ pub fn get_default_routes() -> Vec<(String, String)> {
     #[cfg(target_os = "linux")]
     {
         // ip route show default
-        if let Ok(output) = Command::new("ip")
-            .args(["route", "show", "default"])
-            .output()
-        {
+        if let Some(output) = crate::util::command_output_timeout(
+            "ip",
+            &["route", "show", "default"],
+            ROUTE_COMMAND_TIMEOUT,
+        ) {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -41,7 +44,11 @@ pub fn get_default_routes() -> Vec<(String, String)> {
     #[cfg(target_os = "macos")]
     {
         // netstat can list multiple default routes; sort them by macOS network service order.
-        if let Ok(output) = Command::new("netstat").args(["-rn", "-f", "inet"]).output() {
+        if let Some(output) = crate::util::command_output_timeout(
+            "netstat",
+            &["-rn", "-f", "inet"],
+            ROUTE_COMMAND_TIMEOUT,
+        ) {
             let text = String::from_utf8_lossy(&output.stdout);
             let mut defaults = parse_macos_netstat_routes(&text)
                 .into_iter()
@@ -58,10 +65,11 @@ pub fn get_default_routes() -> Vec<(String, String)> {
 
         // Fallback to the active route if netstat output is unavailable.
         if routes.is_empty() {
-            if let Ok(output) = Command::new("route")
-                .args(["-n", "get", "default"])
-                .output()
-            {
+            if let Some(output) = crate::util::command_output_timeout(
+                "route",
+                &["-n", "get", "default"],
+                ROUTE_COMMAND_TIMEOUT,
+            ) {
                 let text = String::from_utf8_lossy(&output.stdout);
                 let mut gw = String::new();
                 let mut iface = String::new();
@@ -90,7 +98,9 @@ pub fn get_route_table() -> Vec<RouteEntry> {
 
     #[cfg(target_os = "linux")]
     {
-        if let Ok(output) = Command::new("ip").args(["route", "show"]).output() {
+        if let Some(output) =
+            crate::util::command_output_timeout("ip", &["route", "show"], ROUTE_COMMAND_TIMEOUT)
+        {
             let text = String::from_utf8_lossy(&output.stdout);
             for line in text.lines() {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -124,7 +134,11 @@ pub fn get_route_table() -> Vec<RouteEntry> {
 
     #[cfg(target_os = "macos")]
     {
-        if let Ok(output) = Command::new("netstat").args(["-rn", "-f", "inet"]).output() {
+        if let Some(output) = crate::util::command_output_timeout(
+            "netstat",
+            &["-rn", "-f", "inet"],
+            ROUTE_COMMAND_TIMEOUT,
+        ) {
             let text = String::from_utf8_lossy(&output.stdout);
             routes = parse_macos_netstat_routes(&text);
             let service_order = get_macos_service_order();
@@ -180,12 +194,13 @@ fn parse_macos_netstat_routes(text: &str) -> Vec<RouteEntry> {
 
 #[cfg(target_os = "macos")]
 fn get_macos_service_order() -> HashMap<String, u32> {
-    let output = match Command::new("networksetup")
-        .arg("-listnetworkserviceorder")
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return HashMap::new(),
+    let output = match crate::util::command_output_timeout(
+        "networksetup",
+        &["-listnetworkserviceorder"],
+        ROUTE_COMMAND_TIMEOUT,
+    ) {
+        Some(o) => o,
+        None => return HashMap::new(),
     };
     parse_macos_service_order(&String::from_utf8_lossy(&output.stdout))
 }

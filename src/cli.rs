@@ -39,6 +39,19 @@ pub enum Commands {
     #[command(alias = "r")]
     Route,
 
+    /// 查询目标 IP/域名的实际路由选择，并解释是否走 TUN
+    #[command(alias = "rt")]
+    RouteGet {
+        /// 目标主机名或 IP
+        target: String,
+        /// 快速 trace 最大跳数（默认 10）
+        #[arg(long, default_value_t = 10)]
+        max_hops: u32,
+        /// 只显示路由选择，不执行快速 trace
+        #[arg(long)]
+        no_trace: bool,
+    },
+
     /// 仅显示代理设置
     #[command(alias = "p")]
     Proxy,
@@ -93,6 +106,16 @@ pub enum Commands {
         /// 指定 DNS server，仅检查该 server
         #[arg(long)]
         server: Option<String>,
+    },
+
+    /// 对比系统默认解析与指定/系统 DNS server 的直查结果
+    #[command(alias = "dcp")]
+    DnsCompare {
+        /// 要对比解析的域名
+        domain: String,
+        /// 指定 DNS server，可重复传入；不指定时使用系统配置的 DNS servers
+        #[arg(long = "server")]
+        servers: Vec<String>,
     },
 
     /// 路由追踪（TTL 递增）

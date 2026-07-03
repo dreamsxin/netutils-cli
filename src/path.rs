@@ -71,6 +71,7 @@ pub struct HttpPath {
 #[derive(Default, Serialize)]
 pub struct TimingPath {
     pub dns_ms: Option<f64>,
+    pub proxy_connect_ms: Option<f64>,
     pub connect_ms: Option<f64>,
     pub tls_ms: Option<f64>,
     pub ttfb_ms: Option<f64>,
@@ -159,7 +160,13 @@ pub async fn run(
     };
 
     let http = if proxy_value.is_some() {
-        reqwest_timing(&client, &final_parsed.normalized).await
+        reqwest_timing(
+            &client,
+            &final_parsed.normalized,
+            proxy_value.as_deref(),
+            timeout,
+        )
+        .await
     } else {
         manual_timing(&final_parsed, &ips, timeout, dns_ms).await
     };
@@ -325,8 +332,17 @@ async fn collect_network_path(target: IpAddr, max_hops: u32) -> Vec<TraceHopPath
         .collect()
 }
 
-async fn reqwest_timing(client: &reqwest::Client, url: &str) -> HttpPath {
+async fn reqwest_timing(
+    client: &reqwest::Client,
+    url: &str,
+    proxy: Option<&str>,
+    timeout: Duration,
+) -> HttpPath {
     let start = Instant::now();
+    let proxy_connect_ms = match proxy {
+        Some(proxy) => measure_proxy_connect(proxy, timeout).await,
+        None => None,
+    };
     match client.get(url).send().await {
         Ok(response) => HttpPath {
             url: url.to_string(),
@@ -334,6 +350,7 @@ async fn reqwest_timing(client: &reqwest::Client, url: &str) -> HttpPath {
             success: response.status().is_success(),
             error: None,
             timing: TimingPath {
+                proxy_connect_ms,
                 total_ms: start.elapsed().as_secs_f64() * 1000.0,
                 ..Default::default()
             },
@@ -344,10 +361,76 @@ async fn reqwest_timing(client: &reqwest::Client, url: &str) -> HttpPath {
             success: false,
             error: Some(err.to_string()),
             timing: TimingPath {
+                proxy_connect_ms,
                 total_ms: start.elapsed().as_secs_f64() * 1000.0,
                 ..Default::default()
             },
         },
+    }
+}
+
+async fn measure_proxy_connect(proxy: &str, timeout: Duration) -> Option<f64> {
+    let endpoint = parse_proxy_endpoint(proxy)?;
+    let ips = crate::util::resolve_host_all(&endpoint.host).await;
+    if ips.is_empty() {
+        return None;
+    }
+
+    let start = Instant::now();
+    for ip in ips.into_iter().take(8) {
+        let addr = SocketAddr::new(ip, endpoint.port);
+        match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
+            Ok(Ok(_)) => return Some(start.elapsed().as_secs_f64() * 1000.0),
+            Ok(Err(_)) | Err(_) => continue,
+        }
+    }
+    None
+}
+
+struct ProxyEndpoint {
+    host: String,
+    port: u16,
+}
+
+fn parse_proxy_endpoint(proxy: &str) -> Option<ProxyEndpoint> {
+    let (scheme, rest) = proxy.split_once("://").unwrap_or(("http", proxy));
+    let default_port = match scheme.to_ascii_lowercase().as_str() {
+        "https" => 443,
+        "socks" | "socks4" | "socks4a" | "socks5" | "socks5h" => 1080,
+        _ => 80,
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    if authority.is_empty() {
+        return None;
+    }
+
+    if let Some(host) = authority.strip_prefix('[') {
+        let (host, after) = host.split_once(']')?;
+        let port = after
+            .strip_prefix(':')
+            .and_then(|port| port.parse::<u16>().ok())
+            .unwrap_or(default_port);
+        return Some(ProxyEndpoint {
+            host: host.to_string(),
+            port,
+        });
+    }
+
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let port = port.parse::<u16>().ok()?;
+            (host, port)
+        }
+        None => (authority, default_port),
+    };
+    if host.is_empty() {
+        None
+    } else {
+        Some(ProxyEndpoint {
+            host: host.to_string(),
+            port,
+        })
     }
 }
 
@@ -574,6 +657,7 @@ where
             tls_ms,
             ttfb_ms: Some(ttfb_ms),
             total_ms: total_start.elapsed().as_secs_f64() * 1000.0,
+            ..Default::default()
         },
     }
 }
@@ -693,6 +777,7 @@ fn print_report(report: &PathReport) {
     let timing = &report.http.timing;
     let rows = vec![
         vec!["DNS".to_string(), fmt_ms(timing.dns_ms)],
+        vec!["Proxy Connect".to_string(), fmt_ms(timing.proxy_connect_ms)],
         vec!["Connect".to_string(), fmt_ms(timing.connect_ms)],
         vec!["TLS".to_string(), fmt_ms(timing.tls_ms)],
         vec!["TTFB".to_string(), fmt_ms(timing.ttfb_ms)],

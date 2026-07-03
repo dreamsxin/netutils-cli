@@ -1,12 +1,15 @@
 //! Linux/macOS 网络接口实现。
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::process::Command;
+use std::time::Duration;
 
 use super::interface::{classify_interface, InterfaceInfo};
 
 #[cfg(any(target_os = "macos", test))]
 use std::collections::HashMap;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const INTERFACE_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 获取所有网络接口信息
 #[cfg_attr(
@@ -32,7 +35,9 @@ pub fn get_all_interfaces() -> Vec<InterfaceInfo> {
 #[cfg(target_os = "linux")]
 fn get_interfaces_linux() -> Vec<InterfaceInfo> {
     // 优先尝试 `ip -j addr`（JSON 输出，可靠解析）
-    if let Ok(output) = Command::new("ip").args(["-j", "addr"]).output() {
+    if let Some(output) =
+        crate::util::command_output_timeout("ip", &["-j", "addr"], INTERFACE_COMMAND_TIMEOUT)
+    {
         if let Ok(text) = String::from_utf8(output.stdout) {
             if !text.is_empty() {
                 return parse_ip_addr_json(&text);
@@ -41,7 +46,9 @@ fn get_interfaces_linux() -> Vec<InterfaceInfo> {
     }
 
     // 回退: 解析 `ip addr` 文本输出
-    if let Ok(output) = Command::new("ip").arg("addr").output() {
+    if let Some(output) =
+        crate::util::command_output_timeout("ip", &["addr"], INTERFACE_COMMAND_TIMEOUT)
+    {
         if let Ok(text) = String::from_utf8(output.stdout) {
             return parse_ip_addr_text(&text);
         }
@@ -187,10 +194,11 @@ fn parse_ip_addr_text(text: &str) -> Vec<InterfaceInfo> {
 #[cfg(target_os = "macos")]
 fn get_interfaces_macos() -> Vec<InterfaceInfo> {
     let service_order = get_macos_service_order();
-    let output = match Command::new("ifconfig").output() {
-        Ok(o) => o,
-        Err(_) => return Vec::new(),
-    };
+    let output =
+        match crate::util::command_output_timeout("ifconfig", &[], INTERFACE_COMMAND_TIMEOUT) {
+            Some(o) => o,
+            None => return Vec::new(),
+        };
     let text = String::from_utf8_lossy(&output.stdout);
 
     parse_macos_ifconfig(&text, &service_order)
@@ -281,12 +289,13 @@ fn push_macos_interface(
 
 #[cfg(target_os = "macos")]
 fn get_macos_service_order() -> HashMap<String, u32> {
-    let output = match Command::new("networksetup")
-        .arg("-listnetworkserviceorder")
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return HashMap::new(),
+    let output = match crate::util::command_output_timeout(
+        "networksetup",
+        &["-listnetworkserviceorder"],
+        INTERFACE_COMMAND_TIMEOUT,
+    ) {
+        Some(o) => o,
+        None => return HashMap::new(),
     };
     parse_macos_service_order(&String::from_utf8_lossy(&output.stdout))
 }

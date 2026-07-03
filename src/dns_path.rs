@@ -42,16 +42,10 @@ pub struct DnsPathReport {
 }
 
 #[derive(Debug, Clone)]
-struct DnsServer {
-    server: String,
-    interface: Option<String>,
-    source: String,
-}
-
-#[derive(Debug, Clone)]
-struct RouteToTarget {
-    interface: Option<String>,
-    gateway: Option<String>,
+pub struct DnsServer {
+    pub server: String,
+    pub interface: Option<String>,
+    pub source: String,
 }
 
 pub async fn run(domain: Option<String>, server: Option<String>, mode: OutputMode) {
@@ -77,7 +71,7 @@ pub async fn run(domain: Option<String>, server: Option<String>, mode: OutputMod
 
     let mut paths = Vec::new();
     for dns_server in servers {
-        let route = route_to_target(&dns_server.server);
+        let route = crate::route_probe::route_to_target(&dns_server.server);
         let (route_interface, gateway) = match route {
             Some(route) => (route.interface, route.gateway),
             None => (None, None),
@@ -102,7 +96,8 @@ pub async fn run(domain: Option<String>, server: Option<String>, mode: OutputMod
         servers: paths,
         notes: vec![
             "This shows the local OS route to each DNS server, not every upstream hop.".to_string(),
-            "DoH/DoT, browser DNS, and proxy-side DNS may bypass the OS DNS server list.".to_string(),
+            "DoH/DoT, browser DNS, and proxy-side DNS may bypass the OS DNS server list."
+                .to_string(),
         ],
     };
 
@@ -120,7 +115,10 @@ fn print_report(report: &DnsPathReport) {
         println!("  Domain: {}", domain);
     }
     if !report.default_resolve_ips.is_empty() {
-        println!("  Default resolve: {}", report.default_resolve_ips.join(", "));
+        println!(
+            "  Default resolve: {}",
+            report.default_resolve_ips.join(", ")
+        );
     }
 
     println!();
@@ -154,7 +152,14 @@ fn print_report(report: &DnsPathReport) {
             })
             .collect::<Vec<_>>();
         print_table(
-            &["Server", "Configured Iface", "Route Iface", "Gateway", "Source", "Query"],
+            &[
+                "Server",
+                "Configured Iface",
+                "Route Iface",
+                "Gateway",
+                "Source",
+                "Query",
+            ],
             &rows,
         );
     }
@@ -182,7 +187,7 @@ fn dedup_servers(servers: &mut Vec<DnsServer>) {
     servers.retain(|server| seen.insert(server.server.clone()));
 }
 
-fn get_dns_servers() -> Vec<DnsServer> {
+pub fn get_dns_servers() -> Vec<DnsServer> {
     #[cfg(target_os = "windows")]
     {
         return get_dns_servers_windows();
@@ -237,7 +242,10 @@ fn get_dns_servers_macos() -> Vec<DnsServer> {
         return Vec::new();
     };
     let mut servers = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
+    for line in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+    {
         if let Some((_, server)) = line.split_once(':') {
             if line.starts_with("nameserver[") && !server.trim().is_empty() {
                 servers.push(DnsServer {
@@ -268,7 +276,10 @@ fn resolvectl_dns_servers() -> Vec<DnsServer> {
         return Vec::new();
     };
     let mut servers = Vec::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
+    for line in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+    {
         let Some((left, right)) = line.split_once(':') else {
             continue;
         };
@@ -306,88 +317,7 @@ fn resolv_conf_dns_servers() -> Vec<DnsServer> {
         .collect()
 }
 
-fn route_to_target(target: &str) -> Option<RouteToTarget> {
-    #[cfg(target_os = "windows")]
-    {
-        return route_to_target_windows(target);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return route_to_target_macos(target);
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return route_to_target_linux(target);
-    }
-    #[allow(unreachable_code)]
-    None
-}
-
-#[cfg(target_os = "windows")]
-fn route_to_target_windows(target: &str) -> Option<RouteToTarget> {
-    let script = format!(
-        r#"
-$route = Find-NetRoute -RemoteIPAddress "{}" -ErrorAction SilentlyContinue | Sort-Object RouteMetric, InterfaceMetric | Select-Object -First 1
-if ($route) {{ "$($route.InterfaceAlias)|$($route.NextHop)" }}
-"#,
-        target
-    );
-    let output = crate::util::powershell_output(&script, DNS_PATH_COMMAND_TIMEOUT)?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let (iface, gateway) = text.trim().split_once('|')?;
-    Some(RouteToTarget {
-        interface: non_empty(iface),
-        gateway: non_empty(gateway).filter(|gw| gw != "0.0.0.0" && gw != "::"),
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn route_to_target_macos(target: &str) -> Option<RouteToTarget> {
-    let output =
-        crate::util::command_output_timeout("route", &["-n", "get", target], DNS_PATH_COMMAND_TIMEOUT)?;
-    let mut interface = None;
-    let mut gateway = None;
-    for line in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
-        if let Some(value) = line.strip_prefix("interface:") {
-            interface = non_empty(value);
-        } else if let Some(value) = line.strip_prefix("gateway:") {
-            gateway = non_empty(value);
-        }
-    }
-    Some(RouteToTarget { interface, gateway })
-}
-
-#[cfg(target_os = "linux")]
-fn route_to_target_linux(target: &str) -> Option<RouteToTarget> {
-    let output = crate::util::command_output_timeout(
-        "ip",
-        &["route", "get", target],
-        DNS_PATH_COMMAND_TIMEOUT,
-    )?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let parts = text.split_whitespace().collect::<Vec<_>>();
-    let mut interface = None;
-    let mut gateway = None;
-    for (idx, part) in parts.iter().enumerate() {
-        if *part == "dev" {
-            interface = parts.get(idx + 1).and_then(|v| non_empty(v));
-        } else if *part == "via" {
-            gateway = parts.get(idx + 1).and_then(|v| non_empty(v));
-        }
-    }
-    Some(RouteToTarget { interface, gateway })
-}
-
-fn non_empty(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-async fn query_via_server(domain: &str, server: &str) -> DnsServerQuery {
+pub async fn query_via_server(domain: &str, server: &str) -> DnsServerQuery {
     let start = Instant::now();
     let ip = match server.parse::<IpAddr>() {
         Ok(ip) => ip,

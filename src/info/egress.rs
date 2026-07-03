@@ -2,7 +2,7 @@
 
 use std::net::{IpAddr, UdpSocket};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::process::Command;
+use std::time::Duration;
 
 use super::interface::InterfaceInfo;
 
@@ -13,6 +13,8 @@ const PROBE_TARGETS: &[&str] = &[
     "114.114.114.114:80",
     "223.5.5.5:80",
 ];
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const EGRESS_ROUTE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// 通过 UDP 探测实际出口 IP（连接公网地址，不实际发送数据）
 ///
@@ -58,10 +60,11 @@ pub fn find_egress_interface(egress_ip: &IpAddr, interfaces: &[InterfaceInfo]) -
 fn route_interface_for_target(target: &str) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        let output = Command::new("route")
-            .args(["-n", "get", target])
-            .output()
-            .ok()?;
+        let output = crate::util::command_output_timeout(
+            "route",
+            &["-n", "get", target],
+            EGRESS_ROUTE_TIMEOUT,
+        )?;
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines().map(str::trim) {
             if let Some(v) = line.strip_prefix("interface:") {
@@ -76,10 +79,11 @@ fn route_interface_for_target(target: &str) -> Option<String> {
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("ip")
-            .args(["route", "get", target])
-            .output()
-            .ok()?;
+        let output = crate::util::command_output_timeout(
+            "ip",
+            &["route", "get", target],
+            EGRESS_ROUTE_TIMEOUT,
+        )?;
         let text = String::from_utf8_lossy(&output.stdout);
         let parts: Vec<&str> = text.split_whitespace().collect();
         for (i, part) in parts.iter().enumerate() {

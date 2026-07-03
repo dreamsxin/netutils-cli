@@ -5,6 +5,7 @@ mod diag;
 mod diagnose;
 mod dns;
 mod dns_cache;
+mod dns_compare;
 mod dns_path;
 mod i18n;
 mod icmp;
@@ -13,6 +14,8 @@ mod output;
 mod path;
 mod ping;
 mod portscan;
+mod route_get;
+mod route_probe;
 mod table;
 mod traceroute;
 mod util;
@@ -42,23 +45,47 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Iface) => info::print_interfaces(mode),
         Some(Commands::Egress) => info::print_egress(mode),
         Some(Commands::Route) => info::print_routes(mode),
+        Some(Commands::RouteGet {
+            target,
+            max_hops,
+            no_trace,
+        }) => route_get::run(&target, max_hops, no_trace, mode).await,
         Some(Commands::Proxy) => info::print_proxy(mode),
-        Some(Commands::Ping { host, count, timeout, interval }) => {
-            ping::run(&host, count, Duration::from_secs(timeout), Duration::from_secs(interval), mode).await
+        Some(Commands::Ping {
+            host,
+            count,
+            timeout,
+            interval,
+        }) => {
+            ping::run(
+                &host,
+                count,
+                Duration::from_secs(timeout),
+                Duration::from_secs(interval),
+                mode,
+            )
+            .await
         }
-        Some(Commands::Dns { domain, r#type, server }) => {
-            dns::run(&domain, r#type, server, mode).await
+        Some(Commands::Dns {
+            domain,
+            r#type,
+            server,
+        }) => dns::run(&domain, r#type, server, mode).await,
+        Some(Commands::DnsCache {
+            domain,
+            flush,
+            limit,
+        }) => dns_cache::run(domain, flush, limit, mode).await,
+        Some(Commands::DnsPath { domain, server }) => dns_path::run(domain, server, mode).await,
+        Some(Commands::DnsCompare { domain, servers }) => {
+            dns_compare::run(&domain, servers, mode).await
         }
-        Some(Commands::DnsCache { domain, flush, limit }) => {
-            dns_cache::run(domain, flush, limit, mode).await
-        }
-        Some(Commands::DnsPath { domain, server }) => {
-            dns_path::run(domain, server, mode).await
-        }
-        Some(Commands::Trace { host, max_hops }) => {
-            traceroute::run(&host, max_hops, mode).await
-        }
-        Some(Commands::Scan { host, ports, concurrency }) => {
+        Some(Commands::Trace { host, max_hops }) => traceroute::run(&host, max_hops, mode).await,
+        Some(Commands::Scan {
+            host,
+            ports,
+            concurrency,
+        }) => {
             let port_list = ports.as_ref().map(|s| util::parse_ports(s));
             let port_ref = port_list
                 .as_ref()
@@ -66,10 +93,33 @@ async fn main() -> anyhow::Result<()> {
                 .map(|v| v.as_slice());
             portscan::run(&host, port_ref, concurrency, mode).await
         }
-        Some(Commands::Check { target, count, timeout, timing, proxy, no_proxy, concurrency }) => {
-            connectivity::run(&target, count, Duration::from_secs(timeout), timing, proxy, no_proxy, concurrency, mode).await
+        Some(Commands::Check {
+            target,
+            count,
+            timeout,
+            timing,
+            proxy,
+            no_proxy,
+            concurrency,
+        }) => {
+            connectivity::run(
+                &target,
+                count,
+                Duration::from_secs(timeout),
+                timing,
+                proxy,
+                no_proxy,
+                concurrency,
+                mode,
+            )
+            .await
         }
-        Some(Commands::Connections { state, port, process, proto }) => {
+        Some(Commands::Connections {
+            state,
+            port,
+            process,
+            proto,
+        }) => {
             let filter = connections::ConnFilter {
                 state,
                 port,
@@ -80,8 +130,22 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Diag) => diag::run(mode).await,
         Some(Commands::Diagnose { host }) => diagnose::run(&host, mode).await,
-        Some(Commands::Path { url, max_hops, timeout, proxy, no_proxy }) => {
-            path::run(&url, max_hops, Duration::from_secs(timeout), proxy, no_proxy, mode).await
+        Some(Commands::Path {
+            url,
+            max_hops,
+            timeout,
+            proxy,
+            no_proxy,
+        }) => {
+            path::run(
+                &url,
+                max_hops,
+                Duration::from_secs(timeout),
+                proxy,
+                no_proxy,
+                mode,
+            )
+            .await
         }
     }
 
