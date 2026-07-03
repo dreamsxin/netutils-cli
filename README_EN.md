@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 ---
 
-A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
+A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, DNS cache, DNS query path, route decision analysis, HTTP request path analysis, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
 
 ### Features
 
@@ -14,15 +14,20 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `iface` | Network interface list | `netutils iface` |
 | `egress` | Traffic egress + routing logic | `netutils egress` |
 | `route` | Routing table | `netutils route` |
+| `route-get` | Show the actual route selected for a target and whether it uses TUN/VPN | `netutils route-get google.com` |
 | `proxy` | Proxy settings | `netutils proxy` |
 | `ping` | Ping host (ICMP/TCP) | `netutils ping google.com --count 4` |
 | `dns` | DNS query | `netutils dns example.com --type mx` |
+| `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
+| `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
+| `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
 | `trace` | Traceroute | `netutils trace google.com` |
 | `scan` | Port scan | `netutils scan 192.168.1.1 80,443` |
 | `check` | Connectivity test | `netutils check https://example.com` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
+| `path` | HTTP request path analysis (DNS→proxy/egress→Trace→TCP/TLS/HTTP) | `netutils path https://myip.ipipv.com` |
 
 ### Installation
 
@@ -96,15 +101,74 @@ $ netutils diagnose google.com
 
 Auto-conclusion: DNS fail → "DNS resolution failed" / Ping fail → "Host unreachable" / TCP fail → "TCP port unreachable" / HTTPS fail → "HTTPS failed" / All OK → "Link healthy"
 
+### Route And DNS Troubleshooting
+
+When you need to answer "why does this request leave through that interface?", use `route-get` to inspect the kernel route decision for the resolved target IP:
+
+```bash
+# Show resolution results, selected interface/gateway, interface type, and TUN detection
+netutils route-get google.com
+
+# Only show route selection, skip quick trace
+netutils route-get google.com --no-trace
+```
+
+When you need to answer "why does DNS resolve like this?", use `dns-compare` to compare the default system resolution path with direct queries to chosen DNS servers:
+
+```bash
+# Compare against a specific DNS server
+netutils dns-compare google.com --server 8.8.8.8
+
+# Without --server, use the DNS servers configured on the system
+netutils dns-compare google.com
+```
+
+When you suspect stale DNS cache after switching proxy or TUN mode:
+
+```bash
+# Check whether the target exists in system DNS cache and whether it differs from current resolution
+netutils dns-cache google.com
+
+# Flush system DNS cache, then inspect again
+netutils dns-cache google.com --flush
+```
+
+When you need to see which DNS servers the system will query and which local gateway/interface is used to reach them:
+
+```bash
+netutils dns-path google.com
+netutils dns-path google.com --server 8.8.8.8
+```
+
+### HTTP Request Path Analysis
+
+`path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
+
+```bash
+# Auto-detect system proxy; direct when no proxy is configured
+netutils path https://myip.ipipv.com
+
+# Force a specific proxy
+netutils path https://myip.ipipv.com --proxy http://127.0.0.1:7897
+
+# Force direct access and ignore system proxy
+netutils path https://myip.ipipv.com --no-proxy
+```
+
+In proxy mode, `path` also shows `Proxy Connect`, which measures the TCP connect time from the local host to the proxy entrypoint. Downstream DNS, CONNECT, or remote egress phases may be hidden by the proxy or TUN client, so the tool also reports local egress and quick trace for context.
+
 ### Key Features
 
 - **i18n**: Auto-detects system language (Chinese/English), `--lang zh|en` to override
 - **JSON output**: `--json` flag for all commands, pipe-friendly
 - **Color highlighting**: Egress in green, errors in red, virtual adapters in yellow
-- **Command aliases**: `i`/`e`/`r`/`p`/`pg`/`d`/`t`/`s`/`c`/`co`/`dx`/`dg`
-- **Cross-platform**: Windows (PowerShell), Linux (`ip`), macOS (`ifconfig`)
-- **System proxy aware**: HTTP checks auto-detect and use system proxy, labeled `[via proxy]`/`[direct]`
+- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
+- **Cross-platform**: Windows (PowerShell), Linux (`ip`/`resolvectl`), macOS (`ifconfig`/`scutil`/`networksetup`)
+- **System proxy aware**: HTTP checks auto-detect system proxy and support `--proxy` and `--no-proxy`
 - **Egress detection**: UDP probe identifies actual traffic egress + explains routing logic
+- **TUN/VPN detection**: Combines interface type, route result, and egress selection to explain whether traffic uses a virtual adapter
+- **DNS troubleshooting**: Includes DNS cache inspection, DNS server routing, and default-vs-direct resolution comparison
+- **Timeout protection**: External system commands run with timeouts to reduce the chance of the tool hanging
 - **Port range syntax**: `netutils scan host 80-100,443,8080-8090`
 
 ### Project Structure
@@ -133,10 +197,16 @@ netutils/
     │   └── proxy.rs         #   Proxy detection
     ├── ping/mod.rs          # Ping (ICMP/TCP)
     ├── dns/mod.rs           # DNS query
+    ├── dns_cache.rs         # DNS cache inspection
+    ├── dns_path.rs          # DNS server path inspection
+    ├── dns_compare.rs       # DNS result comparison
+    ├── route_probe.rs       # Route lookup helper
+    ├── route_get.rs         # Route decision analysis
     ├── traceroute/mod.rs    # Traceroute
     ├── portscan/mod.rs      # Port scan
     ├── connectivity/mod.rs  # Connectivity test
     ├── connections/mod.rs   # Connection listing
+    ├── path.rs              # HTTP request path analysis
     ├── diag/mod.rs          # One-click diagnostics
     └── diagnose/mod.rs      # Full-link diagnostics
 ```
