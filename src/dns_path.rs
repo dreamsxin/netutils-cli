@@ -187,6 +187,13 @@ fn dedup_servers(servers: &mut Vec<DnsServer>) {
     servers.retain(|server| seen.insert(server.server.clone()));
 }
 
+fn is_placeholder_dns_server(server: &str) -> bool {
+    matches!(
+        server.trim().to_ascii_lowercase().as_str(),
+        "fec0:0:0:ffff::1" | "fec0:0:0:ffff::2" | "fec0:0:0:ffff::3"
+    )
+}
+
 pub fn get_dns_servers() -> Vec<DnsServer> {
     #[cfg(target_os = "windows")]
     {
@@ -222,7 +229,7 @@ Get-DnsClientServerAddress -AddressFamily IPv4, IPv6 -ErrorAction SilentlyContin
         .lines()
         .filter_map(|line| {
             let (iface, server) = line.trim().split_once('|')?;
-            if server.trim().is_empty() {
+            if server.trim().is_empty() || is_placeholder_dns_server(server) {
                 return None;
             }
             Some(DnsServer {
@@ -366,4 +373,18 @@ fn resolver_for_server(server: IpAddr) -> TokioAsyncResolver {
     };
     let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
     TokioAsyncResolver::tokio(config, ResolverOpts::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_placeholder_dns_server;
+
+    #[test]
+    fn filters_windows_placeholder_dns_servers() {
+        assert!(is_placeholder_dns_server("fec0:0:0:ffff::1"));
+        assert!(is_placeholder_dns_server("FEC0:0:0:FFFF::2"));
+        assert!(is_placeholder_dns_server("fec0:0:0:ffff::3"));
+        assert!(!is_placeholder_dns_server("8.8.8.8"));
+        assert!(!is_placeholder_dns_server("2001:4860:4860::8888"));
+    }
 }
