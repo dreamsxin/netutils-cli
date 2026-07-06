@@ -490,7 +490,16 @@ pub fn run(filter: ConnFilter, mode: OutputMode) {
 
     // 检测代理相关连接
     let proxy_port = detect_proxy_port();
-    let proxy_keywords = ["mihomo", "clash", "v2ray", "xray", "sing-box", "trojan", "ssr", "shadowsocks"];
+    let proxy_keywords = [
+        "mihomo",
+        "clash",
+        "v2ray",
+        "xray",
+        "sing-box",
+        "trojan",
+        "ssr",
+        "shadowsocks",
+    ];
     for c in &mut connections {
         // 进程名匹配代理工具
         let proc_lower = c.process_name.to_lowercase();
@@ -577,7 +586,11 @@ pub fn run(filter: ConnFilter, mode: OutputMode) {
                     c.state.clone(),
                     c.pid.to_string(),
                     c.process_name.clone(),
-                    if c.is_proxy { "代理".to_string() } else { "".to_string() },
+                    if c.is_proxy {
+                        "代理".to_string()
+                    } else {
+                        "".to_string()
+                    },
                 ]
             })
             .collect();

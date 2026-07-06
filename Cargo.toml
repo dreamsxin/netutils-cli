@@ -1,8 +1,8 @@
 [package]
 name = "netutils-cli"
-version = "0.3.12"
+version = "0.3.13"
 edition = "2021"
-description = "跨平台网络诊断工具集：接口、路由、出口、代理、Ping、DNS、DNS 路径、HTTP 路径、端口扫描、连通性、连接列表、全链路诊断"
+description = "跨平台网络诊断工具集：接口、路由、出口、代理、Ping、DNS、DNS 路径、TLS、HTTP 路径、端口扫描、连通性、连接列表、全链路诊断"
 license = "MIT"
 repository = "https://github.com/dreamsxin/netutils-cli"
 keywords = ["network", "cli", "ping", "dns", "traceroute"]
@@ -28,6 +28,7 @@ anyhow = "1"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 webpki-roots = "0.26"
+x509-parser = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

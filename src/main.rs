@@ -14,9 +14,11 @@ mod output;
 mod path;
 mod ping;
 mod portscan;
+mod proxy_test;
 mod route_get;
 mod route_probe;
 mod table;
+mod tls_probe;
 mod traceroute;
 mod util;
 
@@ -143,6 +145,38 @@ async fn main() -> anyhow::Result<()> {
                 Duration::from_secs(timeout),
                 proxy,
                 no_proxy,
+                mode,
+            )
+            .await
+        }
+        Some(Commands::ProxyTest {
+            target,
+            proxy,
+            no_system_proxy,
+            timeout,
+        }) => {
+            proxy_test::run(
+                &target,
+                proxy,
+                no_system_proxy,
+                Duration::from_secs(timeout),
+                mode,
+            )
+            .await
+        }
+        Some(Commands::Tls {
+            target,
+            port,
+            sni,
+            timeout,
+            alpn,
+        }) => {
+            tls_probe::run(
+                &target,
+                port,
+                sni,
+                Duration::from_secs(timeout),
+                &alpn,
                 mode,
             )
             .await

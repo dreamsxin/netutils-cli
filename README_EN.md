@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 ---
 
-A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, DNS cache, DNS query path, route decision analysis, HTTP request path analysis, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
+A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, DNS cache, DNS query path, route decision analysis, TLS handshake and certificate diagnostics, HTTP request path analysis, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
 
 ### Features
 
@@ -21,6 +21,8 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
+| `proxy-test` | Check whether a proxy can access a hostname and infer proxy-side DNS availability | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890` |
+| `tls` | TLS handshake and certificate diagnostics | `netutils tls google.com --sni google.com` |
 | `trace` | Traceroute | `netutils trace google.com` |
 | `scan` | Port scan | `netutils scan 192.168.1.1 80,443` |
 | `check` | Connectivity test | `netutils check https://example.com` |
@@ -140,6 +142,31 @@ netutils dns-path google.com
 netutils dns-path google.com --server 8.8.8.8
 ```
 
+When you suspect local DNS cache or local resolution is stale while proxy-side DNS may still work, use `proxy-test`:
+
+```bash
+# Auto-detect the system proxy
+netutils proxy-test google.com
+
+# Force a proxy; use socks5h:// when you need remote DNS with SOCKS
+netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890
+
+# Use only the explicit --proxy value and ignore the system proxy
+netutils proxy-test google.com --proxy http://127.0.0.1:7897 --no-system-proxy
+```
+
+`proxy-test` checks whether a hostname request through the proxy succeeds, then shows local DNS answers, the local route to the proxy entrypoint, and proxy TCP reachability. Most proxy protocols do not expose the exact IP resolved inside the proxy, so the result is an availability inference rather than a remote DNS answer dump.
+
+When you need to inspect TLS handshake, SNI, certificate chain, ALPN, or certificate validity:
+
+```bash
+netutils tls google.com
+netutils tls google.com:443 --sni google.com
+netutils tls https://google.com --alpn h2,http/1.1
+```
+
+`tls` shows DNS, the local route to the target IP, TCP/TLS staged timings, TLS version, cipher suite, ALPN, certificate count, and certificate subject/issuer/validity. The current version performs a direct TLS handshake; proxy/TUN downstream paths may still be hidden by the proxy client.
+
 ### HTTP Request Path Analysis
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
@@ -162,12 +189,12 @@ In proxy mode, `path` also shows `Proxy Connect`, which measures the TCP connect
 - **i18n**: Auto-detects system language (Chinese/English), `--lang zh|en` to override
 - **JSON output**: `--json` flag for all commands, pipe-friendly
 - **Color highlighting**: Egress in green, errors in red, virtual adapters in yellow
-- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
+- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
 - **Cross-platform**: Windows (PowerShell), Linux (`ip`/`resolvectl`), macOS (`ifconfig`/`scutil`/`networksetup`)
 - **System proxy aware**: HTTP checks auto-detect system proxy and support `--proxy` and `--no-proxy`
 - **Egress detection**: UDP probe identifies actual traffic egress + explains routing logic
 - **TUN/VPN detection**: Combines interface type, route result, and egress selection to explain whether traffic uses a virtual adapter
-- **DNS troubleshooting**: Includes DNS cache inspection, DNS server routing, and default-vs-direct resolution comparison
+- **DNS troubleshooting**: Includes DNS cache inspection, DNS server routing, default-vs-direct resolution comparison, and proxy-side DNS availability inference
 - **Timeout protection**: External system commands run with timeouts to reduce the chance of the tool hanging
 - **Port range syntax**: `netutils scan host 80-100,443,8080-8090`
 
@@ -200,6 +227,8 @@ netutils/
     ├── dns_cache.rs         # DNS cache inspection
     ├── dns_path.rs          # DNS server path inspection
     ├── dns_compare.rs       # DNS result comparison
+    ├── proxy_test.rs        # Proxy hostname/DNS availability inference
+    ├── tls_probe.rs         # TLS handshake and certificate diagnostics
     ├── route_probe.rs       # Route lookup helper
     ├── route_get.rs         # Route decision analysis
     ├── traceroute/mod.rs    # Traceroute

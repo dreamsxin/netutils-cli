@@ -4,7 +4,7 @@
 
 ---
 
-一个用 Rust 编写的跨平台命令行网络诊断工具。涵盖网络接口、路由、出口检测、代理检测、Ping、DNS、DNS 缓存、DNS 查询路径、路由决策、HTTP 请求路径、Traceroute、端口扫描、连通性测试、连接列表、一键诊断和全链路诊断。
+一个用 Rust 编写的跨平台命令行网络诊断工具。涵盖网络接口、路由、出口检测、代理检测、Ping、DNS、DNS 缓存、DNS 查询路径、路由决策、TLS 握手与证书诊断、HTTP 请求路径、Traceroute、端口扫描、连通性测试、连接列表、一键诊断和全链路诊断。
 
 ### 功能
 
@@ -21,6 +21,8 @@
 | `dns-cache` | 检查/清理系统 DNS 缓存 | `netutils dns-cache google.com` |
 | `dns-path` | 查看 DNS server 及到 DNS server 的本机路由 | `netutils dns-path google.com` |
 | `dns-compare` | 对比系统默认解析与指定 DNS server 直查结果 | `netutils dns-compare google.com --server 8.8.8.8` |
+| `proxy-test` | 检查代理能否通过域名访问目标，推断代理侧 DNS 可用性 | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890` |
+| `tls` | TLS 握手与证书诊断 | `netutils tls google.com --sni google.com` |
 | `trace` | 路由追踪 | `netutils trace baidu.com` |
 | `scan` | 端口扫描 | `netutils scan 192.168.1.1 80,443` |
 | `check` | 连通性测试 | `netutils check https://baidu.com` |
@@ -185,6 +187,31 @@ netutils dns-path google.com
 netutils dns-path google.com --server 8.8.8.8
 ```
 
+当你怀疑“本地 DNS 缓存/解析不对，但代理侧 DNS 可以访问”时，用 `proxy-test` 对比本地解析和代理域名请求：
+
+```bash
+# 自动读取系统代理
+netutils proxy-test google.com
+
+# 指定代理；SOCKS 远端 DNS 建议使用 socks5h://
+netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890
+
+# 只使用显式 --proxy，不读取系统代理
+netutils proxy-test google.com --proxy http://127.0.0.1:7897 --no-system-proxy
+```
+
+`proxy-test` 能判断“通过代理用域名访问是否成功”，并显示本地 DNS 结果、代理入口路由和代理入口 TCP 连通性。大多数代理协议不会把代理内部最终解析出的 IP 返回给客户端，因此这里的结论是代理侧 DNS 可用性推断，而不是读取代理 DNS 的精确返回值。
+
+当需要排查 TLS 握手、SNI、证书链、ALPN 或证书有效期时：
+
+```bash
+netutils tls google.com
+netutils tls google.com:443 --sni google.com
+netutils tls https://google.com --alpn h2,http/1.1
+```
+
+`tls` 会显示 DNS、到目标 IP 的本机路由、TCP/TLS 分阶段耗时、TLS 版本、Cipher Suite、ALPN、证书链数量和证书主题/签发者/有效期。当前版本执行直连 TLS 握手；代理/TUN 下的远端链路可能仍由代理客户端隐藏。
+
 ### HTTP 请求路径分析
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
@@ -207,12 +234,12 @@ netutils path https://myip.ipipv.com --no-proxy
 - **国际化**: 自动检测系统语言（中英文），`--lang zh|en` 可覆盖
 - **JSON 输出**: `--json` 全局参数，所有子命令支持，便于脚本处理
 - **颜色高亮**: 出口绿色、错误红色、虚拟网卡黄色
-- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
+- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
 - **跨平台**: Windows (PowerShell)、Linux (`ip`/`resolvectl`)、macOS (`ifconfig`/`scutil`/`networksetup`)
 - **系统代理感知**: HTTP 检测自动读取系统代理，支持 `--proxy` 和 `--no-proxy`
 - **出口检测**: UDP 探测识别实际流量出口 + 解释选路逻辑
 - **TUN/VPN 识别**: 结合接口类型、路由结果和出口接口判断是否走虚拟网卡
-- **DNS 排障**: 支持 DNS 缓存检查、DNS server 路由、默认解析与直查对比
+- **DNS 排障**: 支持 DNS 缓存检查、DNS server 路由、默认解析与直查对比、代理侧 DNS 可用性推断
 - **超时保护**: 外部系统命令统一带超时，降低系统命令卡住导致工具无响应的风险
 - **端口范围语法**: `netutils scan host 80-100,443,8080-8090`
 

@@ -67,7 +67,12 @@ pub async fn run(domain: Option<String>, flush: bool, limit: usize, mode: Output
     let proxy = crate::util::get_system_proxy_addr();
     let interfaces = crate::info::collect_interfaces();
     let egress = crate::info::collect_egress(&interfaces);
-    let assessment = assess(domain.as_deref(), cache.supported, &current_ips, &cached_ips);
+    let assessment = assess(
+        domain.as_deref(),
+        cache.supported,
+        &current_ips,
+        &cached_ips,
+    );
     let mut notes = vec![
         "This checks the OS resolver cache. Browsers and proxy clients may keep separate DNS caches."
             .to_string(),
@@ -111,7 +116,11 @@ fn print_report(report: &DnsCacheReport) {
     println!("  Cache source: {}", report.cache_source);
 
     if let Some(flush) = &report.flush {
-        let symbol = if flush.success { "✓".green() } else { "✗".red() };
+        let symbol = if flush.success {
+            "✓".green()
+        } else {
+            "✗".red()
+        };
         println!("  Flush: {} {}", symbol, flush.message);
     }
 

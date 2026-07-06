@@ -211,4 +211,39 @@ pub enum Commands {
         #[arg(long)]
         no_proxy: bool,
     },
+
+    /// 检查代理是否能通过域名访问目标，并推断代理侧 DNS 可用性
+    #[command(alias = "pt")]
+    ProxyTest {
+        /// 目标域名或 HTTP/HTTPS URL，省略 scheme 时默认 https://
+        target: String,
+        /// 指定代理（如 http://127.0.0.1:7897 或 socks5h://127.0.0.1:1080）
+        #[arg(long)]
+        proxy: Option<String>,
+        /// 不自动读取系统代理；仅使用 --proxy
+        #[arg(long)]
+        no_system_proxy: bool,
+        /// 请求/连接超时秒数（默认 5）
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+    },
+
+    /// TLS 握手与证书诊断
+    #[command(alias = "tl")]
+    Tls {
+        /// 目标主机、host:port 或 https:// URL
+        target: String,
+        /// 覆盖目标端口；不指定时使用 URL/host 中的端口或 443
+        #[arg(long)]
+        port: Option<u16>,
+        /// 覆盖 SNI；不指定时使用目标主机名
+        #[arg(long)]
+        sni: Option<String>,
+        /// 请求/连接超时秒数（默认 5）
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+        /// ALPN 协议列表，逗号分隔（默认 h2,http/1.1）
+        #[arg(long, default_value = "h2,http/1.1")]
+        alpn: String,
+    },
 }
