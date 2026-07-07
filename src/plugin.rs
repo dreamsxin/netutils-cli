@@ -5,9 +5,10 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use colored::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::output::{print_json, OutputMode};
 use crate::table::print_table;
@@ -18,7 +19,35 @@ struct PluginInfo {
     binary: String,
     crate_name: String,
     installed: bool,
+    version: Option<String>,
+    source: Option<String>,
     path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct InstallInfo {
+    installed: bool,
+    name: String,
+    root: String,
+    binary: Option<String>,
+    version: Option<String>,
+    source: String,
+    source_value: Option<String>,
+    lock_path: Option<String>,
+    lock_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PluginLock {
+    name: String,
+    binary: String,
+    crate_name: String,
+    version: Option<String>,
+    source: String,
+    source_value: Option<String>,
+    installed_at_unix: u64,
+    binary_path: String,
+    core_version: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,6 +63,20 @@ struct ScaffoldInfo {
     template: String,
     path: String,
     files: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ValidationReport {
+    path: String,
+    ok: bool,
+    checks: Vec<ValidationCheck>,
+}
+
+#[derive(Debug, Serialize)]
+struct ValidationCheck {
+    name: String,
+    ok: bool,
+    message: String,
 }
 
 #[derive(Clone, Copy)]
@@ -63,8 +106,21 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
     }
     command.arg("--root").arg(&root);
 
-    let local_path = local_plugin_path(name);
-    if let Some(path) = path.map(PathBuf::from).or(local_path) {
+    let explicit_path = path.map(PathBuf::from);
+    let local_path = if explicit_path.is_none() {
+        local_plugin_path(name)
+    } else {
+        None
+    };
+    let (source, source_value) = if let Some(path) = &explicit_path {
+        ("path".to_string(), Some(path.display().to_string()))
+    } else if let Some(path) = &local_path {
+        ("local".to_string(), Some(path.display().to_string()))
+    } else {
+        ("registry".to_string(), Some(plugin.crate_name.to_string()))
+    };
+
+    if let Some(path) = explicit_path.or(local_path) {
         command.arg("--path").arg(path);
     } else {
         command.arg(plugin.crate_name);
@@ -81,14 +137,54 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
 
     match command.status() {
         Ok(status) if status.success() => {
+            let binary_path = installed_binary(plugin.name, plugin.binary);
+            let version = binary_path.as_ref().and_then(|path| binary_version(path));
+            let (lock_path, lock_error) = if let Some(binary_path) = &binary_path {
+                let lock = PluginLock {
+                    name: name.to_string(),
+                    binary: plugin.binary.to_string(),
+                    crate_name: plugin.crate_name.to_string(),
+                    version: version.clone(),
+                    source: source.clone(),
+                    source_value: source_value.clone(),
+                    installed_at_unix: unix_now(),
+                    binary_path: binary_path.display().to_string(),
+                    core_version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                match write_plugin_lock(name, &lock) {
+                    Ok(path) => (Some(path.display().to_string()), None),
+                    Err(err) => (None, Some(err)),
+                }
+            } else {
+                (
+                    None,
+                    Some("installed binary was not found after cargo install".to_string()),
+                )
+            };
+            let info = InstallInfo {
+                installed: true,
+                name: name.to_string(),
+                root: root.display().to_string(),
+                binary: binary_path.map(|path| path.display().to_string()),
+                version,
+                source,
+                source_value,
+                lock_path,
+                lock_error,
+            };
             if mode == OutputMode::Json {
-                print_json(&serde_json::json!({
-                    "installed": true,
-                    "name": name,
-                    "root": root.display().to_string()
-                }));
+                print_json(&info);
             } else {
                 println!("  {}", "installed".green());
+                if let Some(version) = &info.version {
+                    println!("  version: {version}");
+                }
+                if let Some(lock_path) = &info.lock_path {
+                    println!("  lock: {lock_path}");
+                }
+                if let Some(err) = &info.lock_error {
+                    println!("  {}", format!("lock warning: {err}").yellow());
+                }
             }
         }
         Ok(status) => print_error(mode, &format!("cargo install failed with status {status}")),
@@ -101,11 +197,18 @@ pub fn list(mode: OutputMode) {
         .iter()
         .map(|plugin| {
             let path = installed_binary(plugin.name, plugin.binary);
+            let lock = read_plugin_lock(plugin.name);
             PluginInfo {
                 name: plugin.name.to_string(),
                 binary: plugin.binary.to_string(),
                 crate_name: plugin.crate_name.to_string(),
                 installed: path.is_some(),
+                version: lock.as_ref().and_then(|lock| lock.version.clone()),
+                source: lock.map(|lock| {
+                    lock.source_value
+                        .map(|value| format!("{}:{value}", lock.source))
+                        .unwrap_or(lock.source)
+                }),
                 path: path.map(|path| path.display().to_string()),
             }
         })
@@ -122,11 +225,24 @@ pub fn list(mode: OutputMode) {
                     plugin.binary.clone(),
                     plugin.crate_name.clone(),
                     if plugin.installed { "yes" } else { "no" }.to_string(),
+                    plugin.version.clone().unwrap_or_else(|| "--".to_string()),
+                    plugin.source.clone().unwrap_or_else(|| "--".to_string()),
                     plugin.path.clone().unwrap_or_else(|| "--".to_string()),
                 ]
             })
             .collect::<Vec<_>>();
-        print_table(&["Name", "Binary", "Crate", "Installed", "Path"], &rows);
+        print_table(
+            &[
+                "Name",
+                "Binary",
+                "Crate",
+                "Installed",
+                "Version",
+                "Source",
+                "Path",
+            ],
+            &rows,
+        );
     }
 }
 
@@ -156,6 +272,158 @@ pub fn print_dir(mode: OutputMode) {
         });
     } else {
         println!("{}", dir.display());
+    }
+}
+
+pub fn validate(path: &str, mode: OutputMode) {
+    let root = PathBuf::from(path);
+    let mut checks = Vec::new();
+    push_check(
+        &mut checks,
+        "directory",
+        root.is_dir(),
+        if root.is_dir() {
+            "plugin directory exists".to_string()
+        } else {
+            "plugin directory does not exist".to_string()
+        },
+    );
+
+    let plugin_toml_path = root.join("plugin.toml");
+    let cargo_toml_path = root.join("Cargo.toml");
+    let readme_path = root.join("README.md");
+    let main_rs_path = root.join("src").join("main.rs");
+
+    let plugin_values = read_kv_file(&plugin_toml_path);
+    push_check(
+        &mut checks,
+        "plugin.toml",
+        plugin_values.is_some(),
+        if plugin_values.is_some() {
+            "plugin.toml exists".to_string()
+        } else {
+            "plugin.toml is missing or unreadable".to_string()
+        },
+    );
+
+    let cargo_values = read_kv_file(&cargo_toml_path);
+    push_check(
+        &mut checks,
+        "Cargo.toml",
+        cargo_values.is_some(),
+        if cargo_values.is_some() {
+            "Cargo.toml exists".to_string()
+        } else {
+            "Cargo.toml is missing or unreadable".to_string()
+        },
+    );
+
+    if let Some(values) = &plugin_values {
+        let name = values.get("name").cloned().unwrap_or_default();
+        let binary = values.get("binary").cloned().unwrap_or_default();
+        let crate_name = values
+            .get("crate")
+            .or_else(|| values.get("crate_name"))
+            .cloned()
+            .unwrap_or_default();
+
+        push_check(
+            &mut checks,
+            "manifest.name",
+            valid_plugin_name(&name),
+            if valid_plugin_name(&name) {
+                format!("plugin name `{name}` is valid")
+            } else {
+                "plugin name must use lowercase ASCII letters, digits, and hyphens".to_string()
+            },
+        );
+        push_check(
+            &mut checks,
+            "manifest.binary",
+            binary.starts_with("netutils-") && binary.len() > "netutils-".len(),
+            if binary.starts_with("netutils-") {
+                format!("binary `{binary}` follows netutils-* convention")
+            } else {
+                "binary should be named netutils-<plugin>".to_string()
+            },
+        );
+        push_check(
+            &mut checks,
+            "manifest.crate",
+            crate_name.starts_with("netutils-plugin-"),
+            if crate_name.starts_with("netutils-plugin-") {
+                format!("crate `{crate_name}` follows netutils-plugin-* convention")
+            } else {
+                "crate should be named netutils-plugin-<plugin>".to_string()
+            },
+        );
+
+        if let Some(cargo_values) = &cargo_values {
+            let package_name = cargo_values.get("name").cloned().unwrap_or_default();
+            push_check(
+                &mut checks,
+                "cargo.package",
+                package_name == crate_name,
+                if package_name == crate_name {
+                    "Cargo package name matches plugin manifest".to_string()
+                } else {
+                    format!(
+                        "Cargo package name `{package_name}` does not match manifest crate `{crate_name}`"
+                    )
+                },
+            );
+        }
+    }
+
+    push_check(
+        &mut checks,
+        "README.md",
+        readme_path.is_file(),
+        if readme_path.is_file() {
+            "README.md exists".to_string()
+        } else {
+            "README.md is recommended for crates.io and users".to_string()
+        },
+    );
+    push_check(
+        &mut checks,
+        "src/main.rs",
+        main_rs_path.is_file(),
+        if main_rs_path.is_file() {
+            "src/main.rs exists".to_string()
+        } else {
+            "src/main.rs is missing".to_string()
+        },
+    );
+
+    let ok = checks.iter().all(|check| check.ok);
+    let report = ValidationReport {
+        path: root.display().to_string(),
+        ok,
+        checks,
+    };
+
+    if mode == OutputMode::Json {
+        print_json(&report);
+    } else {
+        println!("{}", "Plugin Validation".bold());
+        println!("  path: {}", report.path);
+        println!(
+            "  ok: {}",
+            if report.ok { "yes".green() } else { "no".red() }
+        );
+        let rows = report
+            .checks
+            .iter()
+            .map(|check| {
+                vec![
+                    check.name.clone(),
+                    if check.ok { "ok" } else { "failed" }.to_string(),
+                    check.message.clone(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        print_table(&["Check", "Status", "Message"], &rows);
     }
 }
 
@@ -282,6 +550,18 @@ pub fn run_external(args: Vec<OsString>, mode: OutputMode) {
     if mode == OutputMode::Json {
         child.arg("--json");
     }
+    child
+        .env(
+            "NETUTILS_OUTPUT",
+            if mode == OutputMode::Json {
+                "json"
+            } else {
+                "human"
+            },
+        )
+        .env("NETUTILS_CORE_VERSION", env!("CARGO_PKG_VERSION"))
+        .env("NETUTILS_PLUGIN_NAME", &command_name)
+        .env("NETUTILS_COLOR", "auto");
     child.args(rest);
     match child.status() {
         Ok(status) => std::process::exit(status.code().unwrap_or(1)),
@@ -431,6 +711,82 @@ fn valid_plugin_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
+fn plugin_lock_path(name: &str) -> PathBuf {
+    plugin_root(name).join("plugin-lock.json")
+}
+
+fn read_plugin_lock(name: &str) -> Option<PluginLock> {
+    let text = fs::read_to_string(plugin_lock_path(name)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn write_plugin_lock(name: &str, lock: &PluginLock) -> Result<PathBuf, String> {
+    let path = plugin_lock_path(name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(lock).map_err(|err| err.to_string())?;
+    fs::write(&path, text).map_err(|err| err.to_string())?;
+    Ok(path)
+}
+
+fn binary_version(path: &PathBuf) -> Option<String> {
+    let output = Command::new(path).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn push_check(checks: &mut Vec<ValidationCheck>, name: &str, ok: bool, message: String) {
+    checks.push(ValidationCheck {
+        name: name.to_string(),
+        ok,
+        message,
+    });
+}
+
+fn read_kv_file(path: &PathBuf) -> Option<std::collections::BTreeMap<String, String>> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut values = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().to_string();
+        let value = parse_toml_scalar(value.trim());
+        values.entry(key).or_insert(value);
+    }
+    Some(values)
+}
+
+fn parse_toml_scalar(value: &str) -> String {
+    let value = value.trim();
+    if let Some(value) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+        value.to_string()
+    } else if let Some(value) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        value.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 fn known_plugin(name: &str) -> Option<KnownPlugin> {
     KNOWN_PLUGINS
         .iter()
@@ -517,5 +873,12 @@ mod tests {
             .unwrap();
         assert!(cargo.contains("name = \"netutils-plugin-whois\""));
         assert!(cargo.contains("name = \"netutils-whois\""));
+    }
+
+    #[test]
+    fn parses_simple_toml_scalars() {
+        assert_eq!(parse_toml_scalar("\"mcp\""), "mcp");
+        assert_eq!(parse_toml_scalar("'mcp'"), "mcp");
+        assert_eq!(parse_toml_scalar("[\"mcp\"]"), "[\"mcp\"]");
     }
 }

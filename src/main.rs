@@ -206,6 +206,7 @@ async fn main() -> anyhow::Result<()> {
                 mode,
             ),
             PluginCommands::List => plugin::list(mode),
+            PluginCommands::Validate { path } => plugin::validate(&path, mode),
             PluginCommands::Remove { name } => plugin::remove(&name, mode),
             PluginCommands::Dir => plugin::print_dir(mode),
         },
