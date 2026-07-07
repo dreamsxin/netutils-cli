@@ -268,7 +268,8 @@ netutils install mcp
 netutils plugin new whois
 netutils plugin validate ./whois
 netutils plugin list
-netutils install mcp --force
+netutils plugin update mcp
+netutils plugin update all
 netutils plugin dir
 netutils plugin remove mcp
 ```
@@ -280,7 +281,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。升级插件可使用 `install <name> --force`；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
+`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 

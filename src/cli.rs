@@ -376,6 +376,12 @@ pub enum PluginCommands {
     /// 列出已知和已安装插件
     List,
 
+    /// 更新已安装插件
+    Update {
+        /// 插件名
+        name: String,
+    },
+
     /// 校验插件目录结构和 manifest
     Validate {
         /// 插件目录路径

@@ -251,6 +251,20 @@ pub fn list(mode: OutputMode) {
     }
 }
 
+pub fn update(name: &str, mode: OutputMode) {
+    if name == "all" {
+        update_all(mode);
+    } else {
+        install(name, None, true, mode);
+    }
+}
+
+fn update_all(mode: OutputMode) {
+    for plugin in KNOWN_PLUGINS {
+        install(plugin.name, None, true, mode);
+    }
+}
+
 pub fn remove(name: &str, mode: OutputMode) {
     let dir = plugin_root(name);
     if !dir.exists() {
@@ -930,5 +944,11 @@ mod tests {
         assert_eq!(plugin_status(true, false), "untracked");
         assert_eq!(plugin_status(false, true), "stale-lock");
         assert_eq!(plugin_status(false, false), "not-installed");
+    }
+
+    #[test]
+    fn all_is_reserved_for_update_all() {
+        assert!(valid_plugin_name("all"));
+        assert!(known_plugin("all").is_none());
     }
 }
