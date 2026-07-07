@@ -215,6 +215,7 @@ netutils plugin validate ./whois
 netutils plugin list
 netutils plugin update mcp
 netutils plugin update all
+netutils plugin update-all
 netutils plugin dir
 netutils plugin remove mcp
 ```
@@ -226,7 +227,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and `plugin update all` updates every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
+After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 

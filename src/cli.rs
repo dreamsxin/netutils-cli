@@ -258,10 +258,7 @@ pub enum Commands {
     },
 
     /// 插件管理
-    Plugin {
-        #[command(subcommand)]
-        command: PluginCommands,
-    },
+    Plugin,
 
     /// 列出当前网络连接（TCP/UDP）
     #[command(visible_alias = "co", alias = "conn")]
@@ -350,6 +347,27 @@ pub enum Commands {
     External(Vec<OsString>),
 }
 
+/// 插件管理
+#[derive(Parser, Debug)]
+#[command(
+    name = "netutils plugin",
+    about = "插件管理",
+    long_about = None,
+    disable_version_flag = true
+)]
+pub struct PluginCli {
+    /// JSON 输出（便于脚本处理）
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// 覆盖语言（zh/en），默认自动检测
+    #[arg(long, global = true, value_enum)]
+    pub lang: Option<Lang>,
+
+    #[command(subcommand)]
+    pub command: PluginCommands,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum PluginCommands {
     /// 创建一个 Rust 插件项目骨架
@@ -381,6 +399,10 @@ pub enum PluginCommands {
         /// 插件名
         name: String,
     },
+
+    /// 更新所有已知插件
+    #[command(name = "update-all")]
+    UpdateAll,
 
     /// 校验插件目录结构和 manifest
     Validate {

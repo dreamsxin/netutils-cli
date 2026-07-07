@@ -2,6 +2,14 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.3.17] - 2026-07-07
+
+### 修复
+- 拆分 `plugin` 子命令解析，降低主 CLI 的 clap derive 命令树复杂度，修复 Windows debug 构建下新增插件子命令可能触发栈溢出的问题
+
+### 新增
+- 新增 `plugin update-all`，等价于 `plugin update all`
+
 ## [0.3.10] - 2026-07-02
 
 ### 新增

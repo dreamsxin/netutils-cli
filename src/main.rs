@@ -26,25 +26,34 @@ mod traceroute;
 mod util;
 mod ws_client;
 
-use std::time::Duration;
+use std::{env, ffi::OsString, time::Duration};
 
 use clap::Parser;
-use cli::{Cli, Commands, PluginCommands};
+use cli::{Cli, Commands, PluginCli, PluginCommands};
 use output::OutputMode;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let raw_args: Vec<OsString> = env::args_os().collect();
+    if let Some(args) = plugin_help_parse_args(&raw_args) {
+        PluginCli::parse_from(args);
+        return Ok(());
+    }
+    if let Some(plugin_pos) = plugin_command_position(&raw_args) {
+        let cli = PluginCli::parse_from(plugin_parse_args(&raw_args, plugin_pos));
+        i18n::init(cli.lang);
+        let mode = output_mode(cli.json);
+        run_plugin_command(cli.command, mode);
+        return Ok(());
+    }
+
+    let cli = Cli::parse_from(raw_args);
 
     // 初始化 i18n
     i18n::init(cli.lang);
 
     // 确定输出模式
-    let mode = if cli.json {
-        OutputMode::Json
-    } else {
-        OutputMode::Table
-    };
+    let mode = output_mode(cli.json);
 
     match cli.command {
         None | Some(Commands::All) => info::print_all(mode),
@@ -188,29 +197,10 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Install { name, path, force }) => {
             plugin::install(&name, path.as_deref(), force, mode)
         }
-        Some(Commands::Plugin { command }) => match command {
-            PluginCommands::New {
-                name,
-                dir,
-                template,
-                binary,
-                crate_name,
-                force,
-            } => plugin::new_project(
-                &name,
-                dir.as_deref(),
-                &template,
-                binary.as_deref(),
-                crate_name.as_deref(),
-                force,
-                mode,
-            ),
-            PluginCommands::List => plugin::list(mode),
-            PluginCommands::Update { name } => plugin::update(&name, mode),
-            PluginCommands::Validate { path } => plugin::validate(&path, mode),
-            PluginCommands::Remove { name } => plugin::remove(&name, mode),
-            PluginCommands::Dir => plugin::print_dir(mode),
-        },
+        Some(Commands::Plugin) => {
+            let cli = PluginCli::parse_from([OsString::from("netutils plugin")]);
+            run_plugin_command(cli.command, mode);
+        }
         Some(Commands::External(args)) => plugin::run_external(args, mode),
         Some(Commands::Connections {
             state,
@@ -280,4 +270,145 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn output_mode(json: bool) -> OutputMode {
+    if json {
+        OutputMode::Json
+    } else {
+        OutputMode::Table
+    }
+}
+
+fn plugin_command_position(args: &[OsString]) -> Option<usize> {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].to_string_lossy();
+        match arg.as_ref() {
+            "--json" => i += 1,
+            "--lang" => i += 2,
+            _ if arg.starts_with("--lang=") => i += 1,
+            _ => return (arg == "plugin").then_some(i),
+        }
+    }
+    None
+}
+
+fn plugin_help_parse_args(args: &[OsString]) -> Option<Vec<OsString>> {
+    let mut parsed = vec![OsString::from("netutils plugin")];
+    let mut i = 1;
+    while i < args.len() {
+        let arg = args[i].to_string_lossy();
+        match arg.as_ref() {
+            "--json" => {
+                parsed.push(args[i].clone());
+                i += 1;
+            }
+            "--lang" => {
+                if i + 1 >= args.len() {
+                    return None;
+                }
+                parsed.push(args[i].clone());
+                parsed.push(args[i + 1].clone());
+                i += 2;
+            }
+            _ if arg.starts_with("--lang=") => {
+                parsed.push(args[i].clone());
+                i += 1;
+            }
+            _ => break,
+        }
+    }
+
+    if args.get(i).map(|arg| arg.to_string_lossy())? != "help"
+        || args.get(i + 1).map(|arg| arg.to_string_lossy())? != "plugin"
+    {
+        return None;
+    }
+
+    parsed.extend(args.iter().skip(i + 2).cloned());
+    parsed.push(OsString::from("--help"));
+    Some(parsed)
+}
+
+fn plugin_parse_args(args: &[OsString], plugin_pos: usize) -> Vec<OsString> {
+    let mut parsed = Vec::with_capacity(args.len());
+    parsed.push(OsString::from("netutils plugin"));
+    parsed.extend(
+        args.iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(idx, _)| *idx != plugin_pos)
+            .map(|(_, arg)| arg.clone()),
+    );
+    parsed
+}
+
+fn run_plugin_command(command: PluginCommands, mode: OutputMode) {
+    match command {
+        PluginCommands::New {
+            name,
+            dir,
+            template,
+            binary,
+            crate_name,
+            force,
+        } => plugin::new_project(
+            &name,
+            dir.as_deref(),
+            &template,
+            binary.as_deref(),
+            crate_name.as_deref(),
+            force,
+            mode,
+        ),
+        PluginCommands::List => plugin::list(mode),
+        PluginCommands::Update { name } => plugin::update(&name, mode),
+        PluginCommands::UpdateAll => plugin::update("all", mode),
+        PluginCommands::Validate { path } => plugin::validate(&path, mode),
+        PluginCommands::Remove { name } => plugin::remove(&name, mode),
+        PluginCommands::Dir => plugin::print_dir(mode),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn finds_plugin_after_global_options() {
+        let args = args(&["netutils", "--json", "--lang", "zh", "plugin", "list"]);
+
+        assert_eq!(plugin_command_position(&args), Some(4));
+    }
+
+    #[test]
+    fn plugin_parse_args_remove_plugin_and_keep_globals() {
+        let raw = args(&["netutils", "--json", "plugin", "list", "--lang=en"]);
+
+        assert_eq!(
+            plugin_parse_args(&raw, 2),
+            args(&["netutils plugin", "--json", "list", "--lang=en"])
+        );
+    }
+
+    #[test]
+    fn plugin_help_parse_args_targets_plugin_parser() {
+        let raw = args(&["netutils", "--lang", "zh", "help", "plugin", "update-all"]);
+
+        assert_eq!(
+            plugin_help_parse_args(&raw),
+            Some(args(&[
+                "netutils plugin",
+                "--lang",
+                "zh",
+                "update-all",
+                "--help"
+            ]))
+        );
+    }
 }
