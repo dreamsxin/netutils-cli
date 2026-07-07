@@ -210,9 +210,17 @@ Plugin management:
 
 ```bash
 netutils install mcp
+netutils plugin new whois
 netutils plugin list
 netutils plugin dir
 netutils plugin remove mcp
+```
+
+`plugin new` creates a Rust plugin scaffold under `<name>/` in the current directory by default:
+
+```bash
+netutils plugin new whois
+netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.

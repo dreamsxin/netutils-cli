@@ -1,6 +1,6 @@
 [package]
 name = "netutils-cli"
-version = "0.3.15"
+version = "0.3.16"
 edition = "2021"
 description = "跨平台网络诊断工具集：接口、路由、出口、代理、Ping、DNS、DNS 路径、TLS、HTTP、SSE、WebSocket、插件、端口扫描、连通性、连接列表、全链路诊断"
 license = "MIT"

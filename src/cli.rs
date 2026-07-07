@@ -352,6 +352,27 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum PluginCommands {
+    /// 创建一个 Rust 插件项目骨架
+    New {
+        /// 插件命令名，例如 whois
+        name: String,
+        /// 目标父目录，默认当前目录；最终生成 <dir>/<name>
+        #[arg(long)]
+        dir: Option<String>,
+        /// 模板名，目前支持 rust
+        #[arg(long, default_value = "rust")]
+        template: String,
+        /// 二进制名，默认 netutils-<name>
+        #[arg(long)]
+        binary: Option<String>,
+        /// crate 名，默认 netutils-plugin-<name>
+        #[arg(long = "crate")]
+        crate_name: Option<String>,
+        /// 覆盖已有模板文件
+        #[arg(long)]
+        force: bool,
+    },
+
     /// 列出已知和已安装插件
     List,
 

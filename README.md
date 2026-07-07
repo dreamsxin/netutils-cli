@@ -247,17 +247,35 @@ netutils install mcp
 netutils mcp https://example.com/mcp
 netutils mcp https://example.com/mcp -H "Authorization: Bearer xxx"
 netutils mcp https://example.com/mcp --protocol-version 2025-11-25 --listen
+netutils mcp https://example.com/mcp --tool tabs --args '{"action":"list"}'
 ```
 
 `mcp` 由外部插件 `netutils-mcp` 提供。核心命令会把 `netutils mcp ...` 转发给已安装插件。插件会按 Streamable HTTP 传输执行 `initialize`、读取 `MCP-Session-Id`、发送 `notifications/initialized`，并默认执行 `tools/list`。服务端返回 `application/json` 或 `text/event-stream` 都会解析；`--listen` 会额外用 GET 打开 server-to-client SSE 流。
+
+需要测试某个工具调用时，使用 `--tool` 和 `--args`：
+
+```bash
+netutils mcp https://example.com/mcp --tool search --args '{"query":"netutils"}'
+netutils mcp https://example.com/mcp --tool search --args '{"query":"netutils"}' --require-tool
+```
+
+`--args` 必须是 JSON object，默认是 `{}`。`--require-tool` 会先检查 `tools/list` 中是否存在该工具，找不到则不执行 `tools/call`；如果使用 `--no-tools` 跳过工具列表，就不要同时使用 `--require-tool`。
 
 插件管理：
 
 ```bash
 netutils install mcp
+netutils plugin new whois
 netutils plugin list
 netutils plugin dir
 netutils plugin remove mcp
+```
+
+`plugin new` 会生成一个 Rust 插件项目骨架，默认输出到当前目录下的 `<name>/`：
+
+```bash
+netutils plugin new whois
+netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。

@@ -189,6 +189,22 @@ async fn main() -> anyhow::Result<()> {
             plugin::install(&name, path.as_deref(), force, mode)
         }
         Some(Commands::Plugin { command }) => match command {
+            PluginCommands::New {
+                name,
+                dir,
+                template,
+                binary,
+                crate_name,
+                force,
+            } => plugin::new_project(
+                &name,
+                dir.as_deref(),
+                &template,
+                binary.as_deref(),
+                crate_name.as_deref(),
+                force,
+                mode,
+            ),
             PluginCommands::List => plugin::list(mode),
             PluginCommands::Remove { name } => plugin::remove(&name, mode),
             PluginCommands::Dir => plugin::print_dir(mode),
