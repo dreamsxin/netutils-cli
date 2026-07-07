@@ -14,6 +14,7 @@ mod info;
 mod output;
 mod path;
 mod ping;
+mod plugin;
 mod portscan;
 mod proxy_test;
 mod route_get;
@@ -28,7 +29,7 @@ mod ws_client;
 use std::time::Duration;
 
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, PluginCommands};
 use output::OutputMode;
 
 #[tokio::main]
@@ -184,6 +185,15 @@ async fn main() -> anyhow::Result<()> {
             )
             .await
         }
+        Some(Commands::Install { name, path, force }) => {
+            plugin::install(&name, path.as_deref(), force, mode)
+        }
+        Some(Commands::Plugin { command }) => match command {
+            PluginCommands::List => plugin::list(mode),
+            PluginCommands::Remove { name } => plugin::remove(&name, mode),
+            PluginCommands::Dir => plugin::print_dir(mode),
+        },
+        Some(Commands::External(args)) => plugin::run_external(args, mode),
         Some(Commands::Connections {
             state,
             port,

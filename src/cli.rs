@@ -1,5 +1,7 @@
 //! 子命令定义。
 
+use std::ffi::OsString;
+
 use clap::{Parser, Subcommand};
 
 use crate::dns::DnsRecordType;
@@ -243,6 +245,24 @@ pub enum Commands {
         max_seconds: u64,
     },
 
+    /// 安装官方或本地插件
+    Install {
+        /// 插件名，例如 mcp
+        name: String,
+        /// 从本地插件 crate 路径安装
+        #[arg(long)]
+        path: Option<String>,
+        /// 强制重新安装
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// 插件管理
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
+
     /// 列出当前网络连接（TCP/UDP）
     #[command(visible_alias = "co", alias = "conn")]
     Connections {
@@ -324,4 +344,23 @@ pub enum Commands {
         #[arg(long, default_value = "h2,http/1.1")]
         alpn: String,
     },
+
+    /// 外部插件命令，例如 netutils mcp ...
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginCommands {
+    /// 列出已知和已安装插件
+    List,
+
+    /// 删除已安装插件
+    Remove {
+        /// 插件名
+        name: String,
+    },
+
+    /// 显示插件安装目录
+    Dir,
 }

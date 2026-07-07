@@ -29,6 +29,7 @@
 | `http` | 发起一次 HTTP 请求并显示响应结果 | `netutils http https://example.com --show-headers` |
 | `sse` | 测试 Server-Sent Events 流 | `netutils sse https://example.com/events` |
 | `ws` | 测试 WebSocket 握手和消息收发 | `netutils ws wss://echo.websocket.events --message ping` |
+| `mcp` | 插件命令：测试 MCP Streamable HTTP 初始化和工具列表 | `netutils install mcp && netutils mcp https://example.com/mcp` |
 | `connections` | 网络连接列表 (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | 一键诊断 | `netutils diag` |
 | `diagnose` | 全链路诊断 (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose baidu.com` |
@@ -238,6 +239,26 @@ netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
 ```
 
 `sse` 会连接 `text/event-stream` 并解析 `event/id/retry/data` 字段；`ws` 会执行 WebSocket 握手，发送可选文本消息并接收前若干条消息。当前 `ws` 先支持直连测试，代理隧道可后续增强。
+
+当需要测试 MCP Streamable HTTP endpoint 时：
+
+```bash
+netutils install mcp
+netutils mcp https://example.com/mcp
+netutils mcp https://example.com/mcp -H "Authorization: Bearer xxx"
+netutils mcp https://example.com/mcp --protocol-version 2025-11-25 --listen
+```
+
+`mcp` 由外部插件 `netutils-mcp` 提供。核心命令会把 `netutils mcp ...` 转发给已安装插件。插件会按 Streamable HTTP 传输执行 `initialize`、读取 `MCP-Session-Id`、发送 `notifications/initialized`，并默认执行 `tools/list`。服务端返回 `application/json` 或 `text/event-stream` 都会解析；`--listen` 会额外用 GET 打开 server-to-client SSE 流。
+
+插件管理：
+
+```bash
+netutils install mcp
+netutils plugin list
+netutils plugin dir
+netutils plugin remove mcp
+```
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 

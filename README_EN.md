@@ -29,6 +29,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `http` | Send one HTTP request and show the response result | `netutils http https://example.com --show-headers` |
 | `sse` | Test a Server-Sent Events stream | `netutils sse https://example.com/events` |
 | `ws` | Test WebSocket handshake and messages | `netutils ws wss://echo.websocket.events --message ping` |
+| `mcp` | Plugin command: test MCP Streamable HTTP initialization and tools list | `netutils install mcp && netutils mcp https://example.com/mcp` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
@@ -193,6 +194,26 @@ netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
 ```
 
 `sse` connects to `text/event-stream` and parses `event/id/retry/data` fields. `ws` performs a WebSocket handshake, sends optional text messages, and receives the first messages. `ws` currently tests direct WebSocket connections; proxy tunneling can be added separately.
+
+When you need to test an MCP Streamable HTTP endpoint:
+
+```bash
+netutils install mcp
+netutils mcp https://example.com/mcp
+netutils mcp https://example.com/mcp -H "Authorization: Bearer xxx"
+netutils mcp https://example.com/mcp --protocol-version 2025-11-25 --listen
+```
+
+`mcp` is provided by the external `netutils-mcp` plugin. The core CLI forwards `netutils mcp ...` to the installed plugin. The plugin performs `initialize`, captures `MCP-Session-Id`, sends `notifications/initialized`, and runs `tools/list` by default. It handles both `application/json` and `text/event-stream` responses; `--listen` additionally opens a GET server-to-client SSE stream.
+
+Plugin management:
+
+```bash
+netutils install mcp
+netutils plugin list
+netutils plugin dir
+netutils plugin remove mcp
+```
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 
