@@ -19,6 +19,7 @@ struct PluginInfo {
     binary: String,
     crate_name: String,
     installed: bool,
+    status: String,
     version: Option<String>,
     source: Option<String>,
     path: Option<String>,
@@ -198,11 +199,13 @@ pub fn list(mode: OutputMode) {
         .map(|plugin| {
             let path = installed_binary(plugin.name, plugin.binary);
             let lock = read_plugin_lock(plugin.name);
+            let status = plugin_status(path.is_some(), lock.is_some());
             PluginInfo {
                 name: plugin.name.to_string(),
                 binary: plugin.binary.to_string(),
                 crate_name: plugin.crate_name.to_string(),
                 installed: path.is_some(),
+                status,
                 version: lock.as_ref().and_then(|lock| lock.version.clone()),
                 source: lock.map(|lock| {
                     lock.source_value
@@ -225,6 +228,7 @@ pub fn list(mode: OutputMode) {
                     plugin.binary.clone(),
                     plugin.crate_name.clone(),
                     if plugin.installed { "yes" } else { "no" }.to_string(),
+                    plugin.status.clone(),
                     plugin.version.clone().unwrap_or_else(|| "--".to_string()),
                     plugin.source.clone().unwrap_or_else(|| "--".to_string()),
                     plugin.path.clone().unwrap_or_else(|| "--".to_string()),
@@ -237,6 +241,7 @@ pub fn list(mode: OutputMode) {
                 "Binary",
                 "Crate",
                 "Installed",
+                "Status",
                 "Version",
                 "Source",
                 "Path",
@@ -252,12 +257,24 @@ pub fn remove(name: &str, mode: OutputMode) {
         print_error(mode, &format!("plugin is not installed: {name}"));
         return;
     }
-    match std::fs::remove_dir_all(&dir) {
+    let Some(dir) = safe_plugin_dir(name) else {
+        print_error(
+            mode,
+            &format!("refusing to remove unsafe plugin path: {}", dir.display()),
+        );
+        return;
+    };
+    match fs::remove_dir_all(&dir) {
         Ok(()) => {
             if mode == OutputMode::Json {
-                print_json(&serde_json::json!({ "removed": true, "name": name }));
+                print_json(&serde_json::json!({
+                    "removed": true,
+                    "name": name,
+                    "path": dir.display().to_string()
+                }));
             } else {
                 println!("{} {}", "Removed plugin".bold(), name);
+                println!("  path: {}", dir.display());
             }
         }
         Err(err) => print_error(mode, &format!("failed to remove plugin: {err}")),
@@ -711,6 +728,31 @@ fn valid_plugin_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
+fn plugin_status(installed: bool, has_lock: bool) -> String {
+    match (installed, has_lock) {
+        (true, true) => "ok".to_string(),
+        (true, false) => "untracked".to_string(),
+        (false, true) => "stale-lock".to_string(),
+        (false, false) => "not-installed".to_string(),
+    }
+}
+
+fn safe_plugin_dir(name: &str) -> Option<PathBuf> {
+    let base = plugin_base_dir();
+    let dir = plugin_root(name);
+    let base = if base.exists() {
+        fs::canonicalize(base).ok()?
+    } else {
+        base
+    };
+    let dir = fs::canonicalize(dir).ok()?;
+    if dir.starts_with(&base) && dir.file_name().and_then(|value| value.to_str()) == Some(name) {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
 fn plugin_lock_path(name: &str) -> PathBuf {
     plugin_root(name).join("plugin-lock.json")
 }
@@ -880,5 +922,13 @@ mod tests {
         assert_eq!(parse_toml_scalar("\"mcp\""), "mcp");
         assert_eq!(parse_toml_scalar("'mcp'"), "mcp");
         assert_eq!(parse_toml_scalar("[\"mcp\"]"), "[\"mcp\"]");
+    }
+
+    #[test]
+    fn reports_plugin_status() {
+        assert_eq!(plugin_status(true, true), "ok");
+        assert_eq!(plugin_status(true, false), "untracked");
+        assert_eq!(plugin_status(false, true), "stale-lock");
+        assert_eq!(plugin_status(false, false), "not-installed");
     }
 }
