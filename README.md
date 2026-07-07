@@ -4,7 +4,7 @@
 
 ---
 
-一个用 Rust 编写的跨平台命令行网络诊断工具。涵盖网络接口、路由、出口检测、代理检测、Ping、DNS、DNS 缓存、DNS 查询路径、路由决策、TLS 握手与证书诊断、HTTP 请求路径、Traceroute、端口扫描、连通性测试、连接列表、一键诊断和全链路诊断。
+一个用 Rust 编写的跨平台命令行网络诊断工具。涵盖网络接口、路由、出口检测、代理检测、Ping、DNS、DNS 缓存、DNS 查询路径、路由决策、TLS 握手与证书诊断、HTTP/SSE/WebSocket 请求测试、HTTP 请求路径、Traceroute、端口扫描、连通性测试、连接列表、一键诊断和全链路诊断。
 
 ### 功能
 
@@ -26,6 +26,9 @@
 | `trace` | 路由追踪 | `netutils trace baidu.com` |
 | `scan` | 端口扫描 | `netutils scan 192.168.1.1 80,443` |
 | `check` | 连通性测试 | `netutils check https://baidu.com` |
+| `http` | 发起一次 HTTP 请求并显示响应结果 | `netutils http https://example.com --show-headers` |
+| `sse` | 测试 Server-Sent Events 流 | `netutils sse https://example.com/events` |
+| `ws` | 测试 WebSocket 握手和消息收发 | `netutils ws wss://echo.websocket.events --message ping` |
 | `connections` | 网络连接列表 (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | 一键诊断 | `netutils diag` |
 | `diagnose` | 全链路诊断 (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose baidu.com` |
@@ -214,6 +217,28 @@ netutils tls https://google.com --alpn h2,http/1.1
 
 ### HTTP 请求路径分析
 
+当你需要模拟一次 HTTP 请求并查看返回结果时：
+
+```bash
+netutils http https://example.com
+netutils http https://example.com --show-headers
+netutils http https://example.com --method POST --body '{"a":1}' -H "Content-Type: application/json"
+netutils http https://api.ipify.org --proxy socks5h://127.0.0.1:7890
+```
+
+`http` 会显示最终 URL、状态码、总耗时、响应体预览和可选响应头。默认自动读取系统代理；使用 `--proxy` 可指定代理，使用 `--no-proxy` 可强制直连。
+
+当需要测试流式接口或 WebSocket 时：
+
+```bash
+netutils sse https://example.com/events --max-events 5 --max-seconds 30
+netutils sse https://example.com/events -H "Authorization: Bearer xxx" --proxy socks5h://127.0.0.1:7890
+netutils ws wss://echo.websocket.events --message ping --max-messages 1
+netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
+```
+
+`sse` 会连接 `text/event-stream` 并解析 `event/id/retry/data` 字段；`ws` 会执行 WebSocket 握手，发送可选文本消息并接收前若干条消息。当前 `ws` 先支持直连测试，代理隧道可后续增强。
+
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 
 ```bash
@@ -234,7 +259,7 @@ netutils path https://myip.ipipv.com --no-proxy
 - **国际化**: 自动检测系统语言（中英文），`--lang zh|en` 可覆盖
 - **JSON 输出**: `--json` 全局参数，所有子命令支持，便于脚本处理
 - **颜色高亮**: 出口绿色、错误红色、虚拟网卡黄色
-- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
+- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
 - **跨平台**: Windows (PowerShell)、Linux (`ip`/`resolvectl`)、macOS (`ifconfig`/`scutil`/`networksetup`)
 - **系统代理感知**: HTTP 检测自动读取系统代理，支持 `--proxy` 和 `--no-proxy`
 - **出口检测**: UDP 探测识别实际流量出口 + 解释选路逻辑

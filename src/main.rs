@@ -7,6 +7,7 @@ mod dns;
 mod dns_cache;
 mod dns_compare;
 mod dns_path;
+mod http_client;
 mod i18n;
 mod icmp;
 mod info;
@@ -17,10 +18,12 @@ mod portscan;
 mod proxy_test;
 mod route_get;
 mod route_probe;
+mod sse_client;
 mod table;
 mod tls_probe;
 mod traceroute;
 mod util;
+mod ws_client;
 
 use std::time::Duration;
 
@@ -112,6 +115,71 @@ async fn main() -> anyhow::Result<()> {
                 proxy,
                 no_proxy,
                 concurrency,
+                mode,
+            )
+            .await
+        }
+        Some(Commands::Http {
+            url,
+            method,
+            headers,
+            body,
+            timeout,
+            proxy,
+            no_proxy,
+            show_headers,
+            body_limit,
+        }) => {
+            http_client::run(
+                &url,
+                &method,
+                headers,
+                body,
+                Duration::from_secs(timeout),
+                proxy,
+                no_proxy,
+                show_headers,
+                body_limit,
+                mode,
+            )
+            .await
+        }
+        Some(Commands::Sse {
+            url,
+            headers,
+            timeout,
+            max_events,
+            max_seconds,
+            proxy,
+            no_proxy,
+        }) => {
+            sse_client::run(
+                &url,
+                headers,
+                Duration::from_secs(timeout),
+                max_events,
+                Duration::from_secs(max_seconds),
+                proxy,
+                no_proxy,
+                mode,
+            )
+            .await
+        }
+        Some(Commands::Ws {
+            url,
+            headers,
+            timeout,
+            messages,
+            max_messages,
+            max_seconds,
+        }) => {
+            ws_client::run(
+                &url,
+                headers,
+                Duration::from_secs(timeout),
+                messages,
+                max_messages,
+                Duration::from_secs(max_seconds),
                 mode,
             )
             .await

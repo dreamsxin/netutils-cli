@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 ---
 
-A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, DNS cache, DNS query path, route decision analysis, TLS handshake and certificate diagnostics, HTTP request path analysis, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
+A cross-platform command-line network diagnostic tool written in Rust. Covers network interfaces, routing, egress detection, proxy detection, Ping, DNS, DNS cache, DNS query path, route decision analysis, TLS handshake and certificate diagnostics, HTTP/SSE/WebSocket request testing, HTTP request path analysis, Traceroute, port scanning, connectivity testing, connection listing, one-click diagnostics, and full-link diagnostics.
 
 ### Features
 
@@ -26,6 +26,9 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `trace` | Traceroute | `netutils trace google.com` |
 | `scan` | Port scan | `netutils scan 192.168.1.1 80,443` |
 | `check` | Connectivity test | `netutils check https://example.com` |
+| `http` | Send one HTTP request and show the response result | `netutils http https://example.com --show-headers` |
+| `sse` | Test a Server-Sent Events stream | `netutils sse https://example.com/events` |
+| `ws` | Test WebSocket handshake and messages | `netutils ws wss://echo.websocket.events --message ping` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
@@ -169,6 +172,28 @@ netutils tls https://google.com --alpn h2,http/1.1
 
 ### HTTP Request Path Analysis
 
+When you need to simulate an HTTP request and inspect the response:
+
+```bash
+netutils http https://example.com
+netutils http https://example.com --show-headers
+netutils http https://example.com --method POST --body '{"a":1}' -H "Content-Type: application/json"
+netutils http https://api.ipify.org --proxy socks5h://127.0.0.1:7890
+```
+
+`http` shows the final URL, status code, total time, response body preview, and optional response headers. It auto-detects the system proxy by default; use `--proxy` to force a proxy or `--no-proxy` to force direct access.
+
+When you need to test streaming APIs or WebSocket endpoints:
+
+```bash
+netutils sse https://example.com/events --max-events 5 --max-seconds 30
+netutils sse https://example.com/events -H "Authorization: Bearer xxx" --proxy socks5h://127.0.0.1:7890
+netutils ws wss://echo.websocket.events --message ping --max-messages 1
+netutils ws https://example.com/socket -H "Authorization: Bearer xxx"
+```
+
+`sse` connects to `text/event-stream` and parses `event/id/retry/data` fields. `ws` performs a WebSocket handshake, sends optional text messages, and receives the first messages. `ws` currently tests direct WebSocket connections; proxy tunneling can be added separately.
+
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 
 ```bash
@@ -189,7 +214,7 @@ In proxy mode, `path` also shows `Proxy Connect`, which measures the TCP connect
 - **i18n**: Auto-detects system language (Chinese/English), `--lang zh|en` to override
 - **JSON output**: `--json` flag for all commands, pipe-friendly
 - **Color highlighting**: Egress in green, errors in red, virtual adapters in yellow
-- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`co`/`conn`/`dx`/`dg`/`pa`
+- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
 - **Cross-platform**: Windows (PowerShell), Linux (`ip`/`resolvectl`), macOS (`ifconfig`/`scutil`/`networksetup`)
 - **System proxy aware**: HTTP checks auto-detect system proxy and support `--proxy` and `--no-proxy`
 - **Egress detection**: UDP probe identifies actual traffic egress + explains routing logic
@@ -236,6 +261,9 @@ netutils/
     ├── connectivity/mod.rs  # Connectivity test
     ├── connections/mod.rs   # Connection listing
     ├── path.rs              # HTTP request path analysis
+    ├── http_client.rs       # Single HTTP request diagnostics
+    ├── sse_client.rs        # Server-Sent Events diagnostics
+    ├── ws_client.rs         # WebSocket diagnostics
     ├── diag/mod.rs          # One-click diagnostics
     └── diagnose/mod.rs      # Full-link diagnostics
 ```

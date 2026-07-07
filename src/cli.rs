@@ -165,6 +165,84 @@ pub enum Commands {
         concurrency: usize,
     },
 
+    /// 发起一次 HTTP 请求并显示响应结果
+    #[command(alias = "h")]
+    Http {
+        /// HTTP/HTTPS URL，省略 scheme 时默认 https://
+        url: String,
+        /// HTTP 方法（默认 GET）
+        #[arg(short = 'X', long, default_value = "GET")]
+        method: String,
+        /// 请求头，可重复传入，如 -H "Accept: application/json"
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+        /// 请求体文本
+        #[arg(long)]
+        body: Option<String>,
+        /// 请求/连接超时秒数（默认 10）
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+        /// 指定代理（如 http://127.0.0.1:7897 或 socks5h://127.0.0.1:1080）
+        #[arg(long)]
+        proxy: Option<String>,
+        /// 强制直连，忽略系统代理
+        #[arg(long, alias = "no-system-proxy")]
+        no_proxy: bool,
+        /// 显示响应头
+        #[arg(long)]
+        show_headers: bool,
+        /// 最多显示多少字节响应体（默认 2048，0 表示不显示）
+        #[arg(long, default_value_t = 2048)]
+        body_limit: usize,
+    },
+
+    /// 测试 Server-Sent Events / text/event-stream
+    #[command(alias = "event")]
+    Sse {
+        /// SSE URL，省略 scheme 时默认 https://
+        url: String,
+        /// 请求头，可重复传入，如 -H "Authorization: Bearer xxx"
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+        /// 连接超时秒数（默认 10）
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+        /// 最多接收多少个事件（默认 5）
+        #[arg(long, default_value_t = 5)]
+        max_events: usize,
+        /// 最多监听多少秒（默认 30）
+        #[arg(long, default_value_t = 30)]
+        max_seconds: u64,
+        /// 指定代理（如 http://127.0.0.1:7897 或 socks5h://127.0.0.1:1080）
+        #[arg(long)]
+        proxy: Option<String>,
+        /// 强制直连，忽略系统代理
+        #[arg(long, alias = "no-system-proxy")]
+        no_proxy: bool,
+    },
+
+    /// 测试 WebSocket 握手、发送消息和接收消息
+    #[command(visible_alias = "websocket")]
+    Ws {
+        /// WebSocket URL，省略 scheme 时默认 wss://；http(s) 会转换为 ws(s)
+        url: String,
+        /// 请求头，可重复传入，如 -H "Authorization: Bearer xxx"
+        #[arg(short = 'H', long = "header")]
+        headers: Vec<String>,
+        /// 连接/接收超时秒数（默认 10）
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+        /// 连接后发送的文本消息，可重复传入
+        #[arg(long = "message")]
+        messages: Vec<String>,
+        /// 最多接收多少条消息（默认 5）
+        #[arg(long, default_value_t = 5)]
+        max_messages: usize,
+        /// 最多监听多少秒（默认 30）
+        #[arg(long, default_value_t = 30)]
+        max_seconds: u64,
+    },
+
     /// 列出当前网络连接（TCP/UDP）
     #[command(visible_alias = "co", alias = "conn")]
     Connections {
