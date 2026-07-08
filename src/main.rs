@@ -19,12 +19,10 @@ mod portscan;
 mod proxy_test;
 mod route_get;
 mod route_probe;
-mod sse_client;
 mod table;
 mod tls_probe;
 mod traceroute;
 mod util;
-mod ws_client;
 
 use std::{env, ffi::OsString, time::Duration};
 
@@ -150,46 +148,6 @@ async fn main() -> anyhow::Result<()> {
                 no_proxy,
                 show_headers,
                 body_limit,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Sse {
-            url,
-            headers,
-            timeout,
-            max_events,
-            max_seconds,
-            proxy,
-            no_proxy,
-        }) => {
-            sse_client::run(
-                &url,
-                headers,
-                Duration::from_secs(timeout),
-                max_events,
-                Duration::from_secs(max_seconds),
-                proxy,
-                no_proxy,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Ws {
-            url,
-            headers,
-            timeout,
-            messages,
-            max_messages,
-            max_seconds,
-        }) => {
-            ws_client::run(
-                &url,
-                headers,
-                Duration::from_secs(timeout),
-                messages,
-                max_messages,
-                Duration::from_secs(max_seconds),
                 mode,
             )
             .await

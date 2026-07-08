@@ -2,6 +2,17 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.3.18] - 2026-07-08
+
+### 变更
+- 将默认 `README.md` 切换为英文，中文文档改为 `README_ZH.md`
+- 将 `sse` 和 `ws` 从核心命令拆分为官方插件，核心通过外部插件机制转发
+
+### 新增
+- `plugin list` 增加 `sse`、`ws` 已知插件
+- `plugin remove/update/install` 支持使用插件名、二进制名或 crate 名，例如 `sse`、`netutils-sse`、`netutils-plugin-sse`
+- 保留外部命令别名：`event` 转发到 `sse` 插件，`websocket` 转发到 `ws` 插件
+
 ## [0.3.17] - 2026-07-07
 
 ### 修复

@@ -87,19 +87,31 @@ struct KnownPlugin {
     crate_name: &'static str,
 }
 
-const KNOWN_PLUGINS: &[KnownPlugin] = &[KnownPlugin {
-    name: "mcp",
-    binary: "netutils-mcp",
-    crate_name: "netutils-plugin-mcp",
-}];
+const KNOWN_PLUGINS: &[KnownPlugin] = &[
+    KnownPlugin {
+        name: "mcp",
+        binary: "netutils-mcp",
+        crate_name: "netutils-plugin-mcp",
+    },
+    KnownPlugin {
+        name: "sse",
+        binary: "netutils-sse",
+        crate_name: "netutils-plugin-sse",
+    },
+    KnownPlugin {
+        name: "ws",
+        binary: "netutils-ws",
+        crate_name: "netutils-plugin-ws",
+    },
+];
 
 pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
-    let Some(plugin) = known_plugin(name) else {
+    let Some(plugin) = resolve_known_plugin(name) else {
         print_error(mode, &format!("unknown plugin: {name}"));
         return;
     };
 
-    let root = plugin_root(name);
+    let root = plugin_root(plugin.name);
     let mut command = Command::new("cargo");
     command.arg("install");
     if force {
@@ -109,7 +121,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
 
     let explicit_path = path.map(PathBuf::from);
     let local_path = if explicit_path.is_none() {
-        local_plugin_path(name)
+        local_plugin_path(plugin.name)
     } else {
         None
     };
@@ -131,7 +143,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
         println!(
             "{} {} -> {}",
             "Installing plugin".bold(),
-            name,
+            plugin.name,
             root.display()
         );
     }
@@ -142,7 +154,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
             let version = binary_path.as_ref().and_then(|path| binary_version(path));
             let (lock_path, lock_error) = if let Some(binary_path) = &binary_path {
                 let lock = PluginLock {
-                    name: name.to_string(),
+                    name: plugin.name.to_string(),
                     binary: plugin.binary.to_string(),
                     crate_name: plugin.crate_name.to_string(),
                     version: version.clone(),
@@ -152,7 +164,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
                     binary_path: binary_path.display().to_string(),
                     core_version: env!("CARGO_PKG_VERSION").to_string(),
                 };
-                match write_plugin_lock(name, &lock) {
+                match write_plugin_lock(plugin.name, &lock) {
                     Ok(path) => (Some(path.display().to_string()), None),
                     Err(err) => (None, Some(err)),
                 }
@@ -164,7 +176,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
             };
             let info = InstallInfo {
                 installed: true,
-                name: name.to_string(),
+                name: plugin.name.to_string(),
                 root: root.display().to_string(),
                 binary: binary_path.map(|path| path.display().to_string()),
                 version,
@@ -254,6 +266,8 @@ pub fn list(mode: OutputMode) {
 pub fn update(name: &str, mode: OutputMode) {
     if name == "all" {
         update_all(mode);
+    } else if let Some(plugin) = resolve_known_plugin(name) {
+        install(plugin.name, None, true, mode);
     } else {
         install(name, None, true, mode);
     }
@@ -266,12 +280,16 @@ fn update_all(mode: OutputMode) {
 }
 
 pub fn remove(name: &str, mode: OutputMode) {
-    let dir = plugin_root(name);
+    let Some(plugin) = resolve_known_plugin(name) else {
+        print_error(mode, &format!("unknown plugin: {name}"));
+        return;
+    };
+    let dir = plugin_root(plugin.name);
     if !dir.exists() {
         print_error(mode, &format!("plugin is not installed: {name}"));
         return;
     }
-    let Some(dir) = safe_plugin_dir(name) else {
+    let Some(dir) = safe_plugin_dir(plugin.name) else {
         print_error(
             mode,
             &format!("refusing to remove unsafe plugin path: {}", dir.display()),
@@ -283,11 +301,11 @@ pub fn remove(name: &str, mode: OutputMode) {
             if mode == OutputMode::Json {
                 print_json(&serde_json::json!({
                     "removed": true,
-                    "name": name,
+                    "name": plugin.name,
                     "path": dir.display().to_string()
                 }));
             } else {
-                println!("{} {}", "Removed plugin".bold(), name);
+                println!("{} {}", "Removed plugin".bold(), plugin.name);
                 println!("  path: {}", dir.display());
             }
         }
@@ -562,21 +580,48 @@ pub fn run_external(args: Vec<OsString>, mode: OutputMode) {
         return;
     };
     let command_name = command_name.to_string_lossy().to_string();
-    let binary_name = format!("netutils-{command_name}");
-    let binary = installed_binary(&command_name, &binary_name)
-        .or_else(|| find_in_path(&binary_name))
-        .or_else(|| find_in_path(&format!("{binary_name}.exe")));
+    let target = external_command_target(&command_name);
+    let binary = installed_binary(&target.plugin_name, &target.binary_name)
+        .or_else(|| find_in_path(&target.binary_name))
+        .or_else(|| find_in_path(&format!("{}.exe", target.binary_name)));
 
     let Some(binary) = binary else {
         print_error(
             mode,
             &format!(
-                "Command `{command_name}` is not built in and plugin `{command_name}` is not installed.\nInstall it with: netutils install {command_name}"
+                "Command `{command_name}` is not built in and plugin `{}` is not installed.\nInstall it with: netutils install {}",
+                target.plugin_name, target.plugin_name
             ),
         );
         return;
     };
 
+    run_plugin_binary(binary, &command_name, rest, mode);
+}
+
+struct ExternalCommandTarget {
+    plugin_name: String,
+    binary_name: String,
+}
+
+fn external_command_target(command_name: &str) -> ExternalCommandTarget {
+    match command_name {
+        "event" => ExternalCommandTarget {
+            plugin_name: "sse".to_string(),
+            binary_name: "netutils-sse".to_string(),
+        },
+        "websocket" => ExternalCommandTarget {
+            plugin_name: "ws".to_string(),
+            binary_name: "netutils-websocket".to_string(),
+        },
+        _ => ExternalCommandTarget {
+            plugin_name: command_name.to_string(),
+            binary_name: format!("netutils-{command_name}"),
+        },
+    }
+}
+
+fn run_plugin_binary(binary: PathBuf, command_name: &str, rest: &[OsString], mode: OutputMode) {
     let mut child = Command::new(binary);
     if mode == OutputMode::Json {
         child.arg("--json");
@@ -591,7 +636,7 @@ pub fn run_external(args: Vec<OsString>, mode: OutputMode) {
             },
         )
         .env("NETUTILS_CORE_VERSION", env!("CARGO_PKG_VERSION"))
-        .env("NETUTILS_PLUGIN_NAME", &command_name)
+        .env("NETUTILS_PLUGIN_NAME", command_name)
         .env("NETUTILS_COLOR", "auto");
     child.args(rest);
     match child.status() {
@@ -843,11 +888,19 @@ fn parse_toml_scalar(value: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn known_plugin(name: &str) -> Option<KnownPlugin> {
     KNOWN_PLUGINS
         .iter()
         .copied()
         .find(|plugin| plugin.name == name)
+}
+
+fn resolve_known_plugin(value: &str) -> Option<KnownPlugin> {
+    KNOWN_PLUGINS
+        .iter()
+        .copied()
+        .find(|plugin| plugin.name == value || plugin.binary == value || plugin.crate_name == value)
 }
 
 fn installed_binary(name: &str, binary: &str) -> Option<PathBuf> {
@@ -950,5 +1003,36 @@ mod tests {
     fn all_is_reserved_for_update_all() {
         assert!(valid_plugin_name("all"));
         assert!(known_plugin("all").is_none());
+    }
+
+    #[test]
+    fn resolves_known_plugin_by_name_binary_or_crate() {
+        assert_eq!(
+            resolve_known_plugin("sse").map(|plugin| plugin.name),
+            Some("sse")
+        );
+        assert_eq!(
+            resolve_known_plugin("netutils-sse").map(|plugin| plugin.name),
+            Some("sse")
+        );
+        assert_eq!(
+            resolve_known_plugin("netutils-plugin-sse").map(|plugin| plugin.name),
+            Some("sse")
+        );
+    }
+
+    #[test]
+    fn external_command_aliases_resolve_to_official_plugins() {
+        let event = external_command_target("event");
+        assert_eq!(event.plugin_name, "sse");
+        assert_eq!(event.binary_name, "netutils-sse");
+
+        let websocket = external_command_target("websocket");
+        assert_eq!(websocket.plugin_name, "ws");
+        assert_eq!(websocket.binary_name, "netutils-websocket");
+
+        let custom = external_command_target("whois");
+        assert_eq!(custom.plugin_name, "whois");
+        assert_eq!(custom.binary_name, "netutils-whois");
     }
 }
