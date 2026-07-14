@@ -274,6 +274,12 @@ pub enum Commands {
         /// 请求/连接超时秒数（默认 5）
         #[arg(long, default_value_t = 5)]
         timeout: u64,
+        /// 代理请求次数（默认 1；稳定性测试建议至少 20）
+        #[arg(short, long, default_value_t = 1, value_parser = parse_positive_u32)]
+        count: u32,
+        /// 最大并发请求数（默认 1）
+        #[arg(long, default_value_t = 1, value_parser = parse_positive_usize)]
+        concurrency: usize,
     },
 
     /// TLS 握手与证书诊断
@@ -298,6 +304,28 @@ pub enum Commands {
     /// 外部插件命令，例如 netutils mcp ...
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+fn parse_positive_u32(value: &str) -> Result<u32, String> {
+    let value = value
+        .parse::<u32>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    match value {
+        1..=100_000 => Ok(value),
+        0 => Err("must be at least 1".to_string()),
+        _ => Err("must not exceed 100000".to_string()),
+    }
+}
+
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "must be a positive integer".to_string())?;
+    match value {
+        1..=10_000 => Ok(value),
+        0 => Err("must be at least 1".to_string()),
+        _ => Err("must not exceed 10000".to_string()),
+    }
 }
 
 /// 插件管理

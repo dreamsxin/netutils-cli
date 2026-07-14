@@ -198,12 +198,16 @@ async fn main() -> anyhow::Result<()> {
             proxy,
             no_system_proxy,
             timeout,
+            count,
+            concurrency,
         }) => {
             proxy_test::run(
                 &target,
                 proxy,
                 no_system_proxy,
                 Duration::from_secs(timeout),
+                count,
+                concurrency,
                 mode,
             )
             .await

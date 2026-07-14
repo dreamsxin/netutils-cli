@@ -21,7 +21,7 @@
 | `dns-cache` | 检查/清理系统 DNS 缓存 | `netutils dns-cache google.com` |
 | `dns-path` | 查看 DNS server 及到 DNS server 的本机路由 | `netutils dns-path google.com` |
 | `dns-compare` | 对比系统默认解析与指定 DNS server 直查结果 | `netutils dns-compare google.com --server 8.8.8.8` |
-| `proxy-test` | 检查代理能否通过域名访问目标，推断代理侧 DNS 可用性 | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890` |
+| `proxy-test` | 检查代理连通性、DNS 行为和请求稳定性 | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS 握手与证书诊断 | `netutils tls google.com --sni google.com` |
 | `trace` | 路由追踪 | `netutils trace baidu.com` |
 | `scan` | 端口扫描 | `netutils scan 192.168.1.1 80,443` |
@@ -202,9 +202,12 @@ netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890
 
 # 只使用显式 --proxy，不读取系统代理
 netutils proxy-test google.com --proxy http://127.0.0.1:7897 --no-system-proxy
+
+# 请求 100 次、最大并发 5，评估代理稳定性
+netutils proxy-test https://www.google.com --proxy socks5h://127.0.0.1:1080 --count 100 --concurrency 5
 ```
 
-`proxy-test` 能判断“通过代理用域名访问是否成功”，并显示本地 DNS 结果、代理入口路由和代理入口 TCP 连通性。大多数代理协议不会把代理内部最终解析出的 IP 返回给客户端，因此这里的结论是代理侧 DNS 可用性推断，而不是读取代理 DNS 的精确返回值。
+`proxy-test` 能判断“通过代理用域名访问是否成功”，并显示本地 DNS 结果、代理入口路由和代理入口 TCP 连通性。使用 `--count` 后还会统计成功率、HTTP 状态/错误次数以及最小、平均、P50、P95、P99、最大请求耗时。少于 5 个样本时不判定稳定性；样本足够时，成功率至少 99% 且 P95 不超过 `2 * P50 + 250ms` 才判定为 `stable`。HTTP 407 和 5xx 响应计为失败。大多数代理协议不会把代理内部最终解析出的 IP 返回给客户端，因此这里的结论是代理侧 DNS 可用性推断，而不是读取代理 DNS 的精确返回值。表格和 JSON 输出中的代理凭据会被脱敏。
 
 当需要排查 TLS 握手、SNI、证书链、ALPN 或证书有效期时：
 
@@ -291,7 +294,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` 会列出核心内置的已知插件，也就是当前可直接通过 `netutils install <name>` 安装的插件，并显示本机是否已安装、版本、来源和二进制路径。当前已知插件包括 `mcp`、`sse` 和 `ws`。`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 和 `plugin update-all` 都会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
+`plugin list` 会列出核心内置的已知插件，也就是当前可直接通过 `netutils install <name>` 安装的插件，并显示支持平台、当前主机是否支持、本机是否已安装、版本、来源和二进制路径。当前已知插件包括 `mcp`、`sse` 和 `ws`。如果某个已知插件不支持当前平台，`install` 和 `update` 会直接拒绝安装。`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 和 `plugin update-all` 都会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 

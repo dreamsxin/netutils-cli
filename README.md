@@ -21,7 +21,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
-| `proxy-test` | Check whether a proxy can access a hostname and infer proxy-side DNS availability | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890` |
+| `proxy-test` | Check proxy reachability, DNS behavior, and request stability | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS handshake and certificate diagnostics | `netutils tls google.com --sni google.com` |
 | `trace` | Traceroute | `netutils trace google.com` |
 | `scan` | Port scan | `netutils scan 192.168.1.1 80,443` |
@@ -157,9 +157,12 @@ netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890
 
 # Use only the explicit --proxy value and ignore the system proxy
 netutils proxy-test google.com --proxy http://127.0.0.1:7897 --no-system-proxy
+
+# Sample 100 requests with at most 5 in flight to assess stability
+netutils proxy-test https://www.google.com --proxy socks5h://127.0.0.1:1080 --count 100 --concurrency 5
 ```
 
-`proxy-test` checks whether a hostname request through the proxy succeeds, then shows local DNS answers, the local route to the proxy entrypoint, and proxy TCP reachability. Most proxy protocols do not expose the exact IP resolved inside the proxy, so the result is an availability inference rather than a remote DNS answer dump.
+`proxy-test` checks whether a hostname request through the proxy succeeds, then shows local DNS answers, the local route to the proxy entrypoint, and proxy TCP reachability. With `--count` it also reports success rate, HTTP status/error counts, and min/average/P50/P95/P99/max request latency. Fewer than 5 samples are not classified; otherwise a sample is `stable` when the success rate is at least 99% and P95 is no more than `2 * P50 + 250ms`. HTTP 407 and 5xx responses count as failures. Most proxy protocols do not expose the exact IP resolved inside the proxy, so the result is an availability inference rather than a remote DNS answer dump. Proxy credentials are redacted from table and JSON output.
 
 When you need to inspect TLS handshake, SNI, certificate chain, ALPN, or certificate validity:
 
@@ -236,7 +239,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with local install status, version, source, and binary path. The current known plugins are `mcp`, `sse`, and `ws`. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
+`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `mcp`, `sse`, and `ws`. `install` and `update` refuse to install a known plugin when the current platform is not supported by that plugin. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 

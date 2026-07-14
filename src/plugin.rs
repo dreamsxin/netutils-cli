@@ -18,6 +18,8 @@ struct PluginInfo {
     name: String,
     binary: String,
     crate_name: String,
+    platforms: Vec<String>,
+    supported: bool,
     installed: bool,
     status: String,
     version: Option<String>,
@@ -85,23 +87,43 @@ struct KnownPlugin {
     name: &'static str,
     binary: &'static str,
     crate_name: &'static str,
+    platforms: &'static [&'static str],
 }
+
+impl KnownPlugin {
+    fn supports_current_platform(self) -> bool {
+        self.platforms.is_empty() || self.platforms.contains(&current_platform())
+    }
+
+    fn platform_label(self) -> String {
+        if self.platforms.is_empty() {
+            "all".to_string()
+        } else {
+            self.platforms.join(",")
+        }
+    }
+}
+
+const ALL_PLATFORMS: &[&str] = &["windows", "linux", "macos"];
 
 const KNOWN_PLUGINS: &[KnownPlugin] = &[
     KnownPlugin {
         name: "mcp",
         binary: "netutils-mcp",
         crate_name: "netutils-plugin-mcp",
+        platforms: ALL_PLATFORMS,
     },
     KnownPlugin {
         name: "sse",
         binary: "netutils-sse",
         crate_name: "netutils-plugin-sse",
+        platforms: ALL_PLATFORMS,
     },
     KnownPlugin {
         name: "ws",
         binary: "netutils-ws",
         crate_name: "netutils-plugin-ws",
+        platforms: ALL_PLATFORMS,
     },
 ];
 
@@ -110,6 +132,18 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
         print_error(mode, &format!("unknown plugin: {name}"));
         return;
     };
+    if !plugin.supports_current_platform() {
+        print_error(
+            mode,
+            &format!(
+                "plugin `{}` does not support current platform `{}`; supported platforms: {}",
+                plugin.name,
+                current_platform(),
+                plugin.platform_label()
+            ),
+        );
+        return;
+    }
 
     let root = plugin_root(plugin.name);
     let mut command = Command::new("cargo");
@@ -216,6 +250,12 @@ pub fn list(mode: OutputMode) {
                 name: plugin.name.to_string(),
                 binary: plugin.binary.to_string(),
                 crate_name: plugin.crate_name.to_string(),
+                platforms: plugin
+                    .platforms
+                    .iter()
+                    .map(|platform| (*platform).to_string())
+                    .collect(),
+                supported: plugin.supports_current_platform(),
                 installed: path.is_some(),
                 status,
                 version: lock.as_ref().and_then(|lock| lock.version.clone()),
@@ -239,6 +279,12 @@ pub fn list(mode: OutputMode) {
                     plugin.name.clone(),
                     plugin.binary.clone(),
                     plugin.crate_name.clone(),
+                    if plugin.platforms.is_empty() {
+                        "all".to_string()
+                    } else {
+                        plugin.platforms.join(",")
+                    },
+                    if plugin.supported { "yes" } else { "no" }.to_string(),
                     if plugin.installed { "yes" } else { "no" }.to_string(),
                     plugin.status.clone(),
                     plugin.version.clone().unwrap_or_else(|| "--".to_string()),
@@ -252,6 +298,8 @@ pub fn list(mode: OutputMode) {
                 "Name",
                 "Binary",
                 "Crate",
+                "Platforms",
+                "Supported",
                 "Installed",
                 "Status",
                 "Version",
@@ -375,6 +423,10 @@ pub fn validate(path: &str, mode: OutputMode) {
             .or_else(|| values.get("crate_name"))
             .cloned()
             .unwrap_or_default();
+        let platforms = values
+            .get("platforms")
+            .map(|value| parse_toml_string_array(value))
+            .unwrap_or_default();
 
         push_check(
             &mut checks,
@@ -404,6 +456,18 @@ pub fn validate(path: &str, mode: OutputMode) {
                 format!("crate `{crate_name}` follows netutils-plugin-* convention")
             } else {
                 "crate should be named netutils-plugin-<plugin>".to_string()
+            },
+        );
+        push_check(
+            &mut checks,
+            "manifest.platforms",
+            platforms.iter().all(|platform| valid_platform(platform)),
+            if platforms.is_empty() {
+                "platforms omitted; plugin is treated as all-platform".to_string()
+            } else if platforms.iter().all(|platform| valid_platform(platform)) {
+                format!("platforms `{}` are valid", platforms.join(","))
+            } else {
+                "platforms must contain only windows, linux, or macos".to_string()
             },
         );
 
@@ -696,6 +760,7 @@ binary = "{binary}"
 crate = "{crate_name}"
 description = "netutils plugin"
 commands = ["{name}"]
+platforms = ["windows", "linux", "macos"]
 "#
     )
 }
@@ -888,6 +953,35 @@ fn parse_toml_scalar(value: &str) -> String {
     }
 }
 
+fn parse_toml_string_array(value: &str) -> Vec<String> {
+    let value = value.trim();
+    let Some(value) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
+        return Vec::new();
+    };
+    value
+        .split(',')
+        .map(parse_toml_scalar)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn current_platform() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        std::env::consts::OS
+    }
+}
+
+fn valid_platform(value: &str) -> bool {
+    matches!(value, "windows" | "linux" | "macos")
+}
+
 #[cfg(test)]
 fn known_plugin(name: &str) -> Option<KnownPlugin> {
     KNOWN_PLUGINS
@@ -989,6 +1083,47 @@ mod tests {
         assert_eq!(parse_toml_scalar("\"mcp\""), "mcp");
         assert_eq!(parse_toml_scalar("'mcp'"), "mcp");
         assert_eq!(parse_toml_scalar("[\"mcp\"]"), "[\"mcp\"]");
+    }
+
+    #[test]
+    fn parses_toml_string_arrays() {
+        assert_eq!(
+            parse_toml_string_array("[\"windows\", \"linux\"]"),
+            vec!["windows".to_string(), "linux".to_string()]
+        );
+    }
+
+    #[test]
+    fn known_plugins_support_current_platform() {
+        assert!(KNOWN_PLUGINS
+            .iter()
+            .all(|plugin| plugin.supports_current_platform()));
+    }
+
+    #[test]
+    fn plugin_platform_support_checks_current_platform() {
+        static UNSUPPORTED_ON_WINDOWS: &[&str] = &["linux"];
+        static UNSUPPORTED_OFF_WINDOWS: &[&str] = &["windows"];
+
+        let current_only = KnownPlugin {
+            name: "current-only",
+            binary: "netutils-current-only",
+            crate_name: "netutils-plugin-current-only",
+            platforms: ALL_PLATFORMS,
+        };
+        let unsupported = KnownPlugin {
+            name: "unsupported",
+            binary: "netutils-unsupported",
+            crate_name: "netutils-plugin-unsupported",
+            platforms: if current_platform() == "windows" {
+                UNSUPPORTED_ON_WINDOWS
+            } else {
+                UNSUPPORTED_OFF_WINDOWS
+            },
+        };
+
+        assert!(current_only.supports_current_platform());
+        assert!(!unsupported.supports_current_platform());
     }
 
     #[test]
