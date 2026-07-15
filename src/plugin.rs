@@ -120,6 +120,12 @@ const KNOWN_PLUGINS: &[KnownPlugin] = &[
         platforms: ALL_PLATFORMS,
     },
     KnownPlugin {
+        name: "subdomain",
+        binary: "netutils-subdomain",
+        crate_name: "netutils-plugin-subdomain",
+        platforms: ALL_PLATFORMS,
+    },
+    KnownPlugin {
         name: "ws",
         binary: "netutils-ws",
         crate_name: "netutils-plugin-ws",

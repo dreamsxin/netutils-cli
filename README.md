@@ -30,6 +30,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `sse` | Plugin command: test a Server-Sent Events stream | `netutils install sse && netutils sse https://example.com/events` |
 | `ws` | Plugin command: test WebSocket handshake and messages | `netutils install ws && netutils ws wss://echo.websocket.events --message ping` |
 | `mcp` | Plugin command: test MCP Streamable HTTP initialization and tools list | `netutils install mcp && netutils mcp https://example.com/mcp` |
+| `subdomain` | Plugin command: passively discover subdomains from public sources | `netutils install subdomain && netutils subdomain example.com` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
@@ -221,6 +222,7 @@ netutils plugin list
 netutils install mcp
 netutils install sse
 netutils install ws
+netutils install subdomain
 netutils plugin new whois
 netutils plugin validate ./whois
 netutils plugin update mcp
@@ -239,7 +241,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `mcp`, `sse`, and `ws`. `install` and `update` refuse to install a known plugin when the current platform is not supported by that plugin. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
+`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `mcp`, `sse`, `subdomain`, and `ws`. `install` and `update` refuse to install a known plugin when the current platform is not supported by that plugin. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 

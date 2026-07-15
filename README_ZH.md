@@ -30,6 +30,7 @@
 | `sse` | 插件命令：测试 Server-Sent Events 流 | `netutils install sse && netutils sse https://example.com/events` |
 | `ws` | 插件命令：测试 WebSocket 握手和消息收发 | `netutils install ws && netutils ws wss://echo.websocket.events --message ping` |
 | `mcp` | 插件命令：测试 MCP Streamable HTTP 初始化和工具列表 | `netutils install mcp && netutils mcp https://example.com/mcp` |
+| `subdomain` | 插件命令：基于公开被动源发现子域名 | `netutils install subdomain && netutils subdomain example.com` |
 | `connections` | 网络连接列表 (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | 一键诊断 | `netutils diag` |
 | `diagnose` | 全链路诊断 (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose baidu.com` |
@@ -276,6 +277,7 @@ netutils plugin list
 netutils install mcp
 netutils install sse
 netutils install ws
+netutils install subdomain
 netutils plugin new whois
 netutils plugin validate ./whois
 netutils plugin update mcp
@@ -294,7 +296,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` 会列出核心内置的已知插件，也就是当前可直接通过 `netutils install <name>` 安装的插件，并显示支持平台、当前主机是否支持、本机是否已安装、版本、来源和二进制路径。当前已知插件包括 `mcp`、`sse` 和 `ws`。如果某个已知插件不支持当前平台，`install` 和 `update` 会直接拒绝安装。`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 和 `plugin update-all` 都会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
+`plugin list` 会列出核心内置的已知插件，也就是当前可直接通过 `netutils install <name>` 安装的插件，并显示支持平台、当前主机是否支持、本机是否已安装、版本、来源和二进制路径。当前已知插件包括 `mcp`、`sse`、`subdomain` 和 `ws`。如果某个已知插件不支持当前平台，`install` 和 `update` 会直接拒绝安装。`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 和 `plugin update-all` 都会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 
