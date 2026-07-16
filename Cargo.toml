@@ -1,6 +1,6 @@
 [package]
 name = "netutils-cli"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2021"
 description = "Cross-platform network diagnostics toolkit: interfaces, routing, proxy, ping, DNS, TLS, HTTP, plugins, port scan, connectivity, and full-link diagnosis"
 license = "MIT"
