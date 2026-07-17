@@ -301,9 +301,16 @@ async fn collect_redirects(
     let mut current = start_url.to_string();
 
     for _ in 0..MAX_REDIRECTS {
-        let response = match client.get(&current).send().await {
-            Ok(response) => response,
-            Err(_) => break,
+        let response = match client.head(&current).send().await {
+            Ok(response)
+                if response.status().as_u16() != 405 && response.status().as_u16() != 501 =>
+            {
+                response
+            }
+            _ => match client.get(&current).send().await {
+                Ok(response) => response,
+                Err(_) => break,
+            },
         };
         let status = response.status();
         let location = response
