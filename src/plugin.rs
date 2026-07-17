@@ -108,6 +108,12 @@ const ALL_PLATFORMS: &[&str] = &["windows", "linux", "macos"];
 
 const KNOWN_PLUGINS: &[KnownPlugin] = &[
     KnownPlugin {
+        name: "chrome-proxy",
+        binary: "netutils-chrome-proxy",
+        crate_name: "netutils-plugin-chrome-proxy",
+        platforms: ALL_PLATFORMS,
+    },
+    KnownPlugin {
         name: "mcp",
         binary: "netutils-mcp",
         crate_name: "netutils-plugin-mcp",
