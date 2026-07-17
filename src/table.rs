@@ -22,7 +22,7 @@ fn strip_ansi(s: &str) -> String {
             // 跳过 ESC[ ... m 序列
             if chars.peek() == Some(&'[') {
                 chars.next(); // 消费 '['
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c.is_ascii_alphabetic() {
                         break;
                     }
@@ -44,7 +44,7 @@ fn format_row(cells: &[String], widths: &[usize]) -> String {
         .zip(widths.iter())
         .map(|(cell, w)| {
             let visible = display_width(cell);
-            let padding = if visible < *w { *w - visible } else { 0 };
+            let padding = (*w).saturating_sub(visible);
             format!(" {}{} ", cell, " ".repeat(padding))
         })
         .collect();
@@ -58,7 +58,7 @@ fn format_header_row(headers: &[&str], widths: &[usize]) -> String {
         .zip(widths.iter())
         .map(|(h, w)| {
             let visible = display_width(h);
-            let padding = if visible < *w { *w - visible } else { 0 };
+            let padding = (*w).saturating_sub(visible);
             format!(" {}{} ", h, " ".repeat(padding))
         })
         .collect();

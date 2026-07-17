@@ -51,6 +51,7 @@ pub fn current() -> Lang {
 }
 
 /// 自动检测系统语言
+#[allow(clippy::needless_return)]
 pub fn detect() -> Lang {
     // 1. 环境变量 NETUTILS_LANG
     if let Ok(v) = std::env::var("NETUTILS_LANG") {

@@ -166,20 +166,13 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
     command.arg("--root").arg(&root);
 
     let explicit_path = path.map(PathBuf::from);
-    let local_path = if explicit_path.is_none() {
-        local_plugin_path(plugin.name)
-    } else {
-        None
-    };
     let (source, source_value) = if let Some(path) = &explicit_path {
         ("path".to_string(), Some(path.display().to_string()))
-    } else if let Some(path) = &local_path {
-        ("local".to_string(), Some(path.display().to_string()))
     } else {
         ("registry".to_string(), Some(plugin.crate_name.to_string()))
     };
 
-    if let Some(path) = explicit_path.or(local_path) {
+    if let Some(path) = explicit_path {
         command.arg("--path").arg(path);
     } else {
         command.arg(plugin.crate_name);
@@ -197,7 +190,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
     match command.status() {
         Ok(status) if status.success() => {
             let binary_path = installed_binary(plugin.name, plugin.binary);
-            let version = binary_path.as_ref().and_then(|path| binary_version(path));
+            let version = binary_path.as_ref().and_then(binary_version);
             let (lock_path, lock_error) = if let Some(binary_path) = &binary_path {
                 let lock = PluginLock {
                     name: plugin.name.to_string(),
@@ -650,7 +643,7 @@ pub fn new_project(
     }
 }
 
-pub fn run_external(args: Vec<OsString>, mode: OutputMode) {
+pub async fn run_external(args: Vec<OsString>, mode: OutputMode) {
     let Some((command_name, rest)) = args.split_first() else {
         print_error(mode, "empty external command");
         return;
@@ -672,7 +665,7 @@ pub fn run_external(args: Vec<OsString>, mode: OutputMode) {
         return;
     };
 
-    run_plugin_binary(binary, &command_name, rest, mode);
+    run_plugin_binary(binary, &command_name, rest, mode).await;
 }
 
 struct ExternalCommandTarget {
@@ -697,8 +690,13 @@ fn external_command_target(command_name: &str) -> ExternalCommandTarget {
     }
 }
 
-fn run_plugin_binary(binary: PathBuf, command_name: &str, rest: &[OsString], mode: OutputMode) {
-    let mut child = Command::new(binary);
+async fn run_plugin_binary(
+    binary: PathBuf,
+    command_name: &str,
+    rest: &[OsString],
+    mode: OutputMode,
+) {
+    let mut child = tokio::process::Command::new(binary);
     if mode == OutputMode::Json {
         child.arg("--json");
     }
@@ -714,14 +712,55 @@ fn run_plugin_binary(binary: PathBuf, command_name: &str, rest: &[OsString], mod
         .env("NETUTILS_CORE_VERSION", env!("CARGO_PKG_VERSION"))
         .env("NETUTILS_PLUGIN_NAME", command_name)
         .env("NETUTILS_COLOR", "auto");
-    child.args(rest);
-    match child.status() {
-        Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+    if let Some(target) = plugin_target_arg(rest) {
+        if let Some(proxy) = crate::util::get_system_proxy_for_url(&target) {
+            child.env("NETUTILS_EFFECTIVE_PROXY", proxy);
+        } else {
+            child.env("NETUTILS_EFFECTIVE_PROXY", "");
+        }
+    }
+    child.args(rest).kill_on_drop(true);
+    match child.status().await {
+        Ok(status) if status.success() => {}
+        Ok(status) => crate::output::mark_exit_code(status.code().unwrap_or(1)),
         Err(err) => print_error(
             mode,
             &format!("failed to run plugin `{command_name}`: {err}"),
         ),
     }
+}
+
+fn plugin_target_arg(args: &[OsString]) -> Option<String> {
+    const VALUE_OPTIONS: &[&str] = &[
+        "-H",
+        "--header",
+        "--timeout",
+        "--proxy",
+        "--protocol-version",
+        "--tool",
+        "--args",
+        "--max-events",
+        "--max-messages",
+        "--max-seconds",
+        "--message",
+    ];
+    let mut skip_value = false;
+    for arg in args {
+        let value = arg.to_string_lossy();
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if VALUE_OPTIONS.contains(&value.as_ref()) {
+            skip_value = true;
+            continue;
+        }
+        if value.starts_with('-') {
+            continue;
+        }
+        return Some(value.into_owned());
+    }
+    None
 }
 
 fn scaffold_files(name: &str, binary: &str, crate_name: &str) -> Vec<(PathBuf, String)> {
@@ -1036,17 +1075,6 @@ fn plugin_root(name: &str) -> PathBuf {
     plugin_base_dir().join(name)
 }
 
-fn local_plugin_path(name: &str) -> Option<PathBuf> {
-    let cwd = env::current_dir().ok()?;
-    let candidate = cwd
-        .parent()
-        .unwrap_or(&cwd)
-        .join("netutils-plugins")
-        .join("plugins")
-        .join(name);
-    candidate.exists().then_some(candidate)
-}
-
 fn find_in_path(binary: &str) -> Option<PathBuf> {
     let path_var = env::var_os("PATH")?;
     env::split_paths(&path_var)
@@ -1055,6 +1083,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 }
 
 fn print_error(mode: OutputMode, message: &str) {
+    crate::output::mark_failure();
     if mode == OutputMode::Json {
         print_json(&serde_json::json!({ "error": message }));
     } else {
@@ -1181,5 +1210,18 @@ mod tests {
         let custom = external_command_target("whois");
         assert_eq!(custom.plugin_name, "whois");
         assert_eq!(custom.binary_name, "netutils-whois");
+    }
+
+    #[test]
+    fn finds_plugin_target_after_options() {
+        let args = vec![
+            OsString::from("--timeout"),
+            OsString::from("5"),
+            OsString::from("https://example.com/mcp"),
+        ];
+        assert_eq!(
+            plugin_target_arg(&args).as_deref(),
+            Some("https://example.com/mcp")
+        );
     }
 }

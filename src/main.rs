@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         i18n::init(cli.lang);
         let mode = output_mode(cli.json);
         run_plugin_command(cli.command, mode);
+        output::exit_if_failed();
         return Ok(());
     }
 
@@ -52,185 +53,202 @@ async fn main() -> anyhow::Result<()> {
 
     // 确定输出模式
     let mode = output_mode(cli.json);
+    let total_timeout = cli.total_timeout;
 
-    match cli.command {
-        None | Some(Commands::All) => info::print_all(mode),
-        Some(Commands::Iface) => info::print_interfaces(mode),
-        Some(Commands::Egress) => info::print_egress(mode),
-        Some(Commands::Route) => info::print_routes(mode),
-        Some(Commands::RouteGet {
-            target,
-            max_hops,
-            no_trace,
-        }) => route_get::run(&target, max_hops, no_trace, mode).await,
-        Some(Commands::Proxy) => info::print_proxy(mode),
-        Some(Commands::Ping {
-            host,
-            count,
-            timeout,
-            interval,
-        }) => {
-            ping::run(
-                &host,
+    let command = async move {
+        match cli.command {
+            None | Some(Commands::All) => info::print_all(mode),
+            Some(Commands::Iface) => info::print_interfaces(mode),
+            Some(Commands::Egress) => info::print_egress(mode),
+            Some(Commands::Route) => info::print_routes(mode),
+            Some(Commands::RouteGet {
+                target,
+                max_hops,
+                no_trace,
+            }) => route_get::run(&target, max_hops, no_trace, mode).await,
+            Some(Commands::Proxy) => info::print_proxy(mode),
+            Some(Commands::Ping {
+                host,
                 count,
-                Duration::from_secs(timeout),
-                Duration::from_secs(interval),
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Dns {
-            domain,
-            r#type,
-            server,
-        }) => dns::run(&domain, r#type, server, mode).await,
-        Some(Commands::DnsCache {
-            domain,
-            flush,
-            limit,
-        }) => dns_cache::run(domain, flush, limit, mode).await,
-        Some(Commands::DnsPath { domain, server }) => dns_path::run(domain, server, mode).await,
-        Some(Commands::DnsCompare { domain, servers }) => {
-            dns_compare::run(&domain, servers, mode).await
-        }
-        Some(Commands::Trace { host, max_hops }) => traceroute::run(&host, max_hops, mode).await,
-        Some(Commands::Scan {
-            host,
-            ports,
-            concurrency,
-        }) => {
-            let port_list = ports.as_ref().map(|s| util::parse_ports(s));
-            let port_ref = port_list
-                .as_ref()
-                .filter(|v| !v.is_empty())
-                .map(|v| v.as_slice());
-            portscan::run(&host, port_ref, concurrency, mode).await
-        }
-        Some(Commands::Check {
-            target,
-            count,
-            timeout,
-            timing,
-            proxy,
-            no_proxy,
-            concurrency,
-        }) => {
-            connectivity::run(
-                &target,
+                timeout,
+                interval,
+            }) => {
+                ping::run(
+                    &host,
+                    count,
+                    Duration::from_secs(timeout),
+                    Duration::from_secs(interval),
+                    mode,
+                )
+                .await
+            }
+            Some(Commands::Dns {
+                domain,
+                r#type,
+                server,
+            }) => dns::run(&domain, r#type, server, mode).await,
+            Some(Commands::DnsCache {
+                domain,
+                flush,
+                limit,
+            }) => dns_cache::run(domain, flush, limit, mode).await,
+            Some(Commands::DnsPath { domain, server }) => dns_path::run(domain, server, mode).await,
+            Some(Commands::DnsCompare { domain, servers }) => {
+                dns_compare::run(&domain, servers, mode).await
+            }
+            Some(Commands::Trace { host, max_hops }) => {
+                traceroute::run(&host, max_hops, mode).await
+            }
+            Some(Commands::Scan {
+                host,
+                ports,
+                concurrency,
+            }) => {
+                let port_list = ports.as_ref().map(|s| util::parse_ports(s));
+                let port_ref = port_list
+                    .as_ref()
+                    .filter(|v| !v.is_empty())
+                    .map(|v| v.as_slice());
+                portscan::run(&host, port_ref, concurrency, mode).await
+            }
+            Some(Commands::Check {
+                target,
                 count,
-                Duration::from_secs(timeout),
+                timeout,
                 timing,
                 proxy,
                 no_proxy,
                 concurrency,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Http {
-            url,
-            method,
-            headers,
-            body,
-            timeout,
-            proxy,
-            no_proxy,
-            show_headers,
-            body_limit,
-        }) => {
-            http_client::run(
-                &url,
-                &method,
+            }) => {
+                connectivity::run(
+                    &target,
+                    count,
+                    Duration::from_secs(timeout),
+                    timing,
+                    proxy,
+                    no_proxy,
+                    concurrency,
+                    mode,
+                )
+                .await
+            }
+            Some(Commands::Http {
+                url,
+                method,
                 headers,
                 body,
-                Duration::from_secs(timeout),
+                timeout,
                 proxy,
                 no_proxy,
                 show_headers,
                 body_limit,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Install { name, path, force }) => {
-            plugin::install(&name, path.as_deref(), force, mode)
-        }
-        Some(Commands::Plugin) => {
-            let cli = PluginCli::parse_from([OsString::from("netutils plugin")]);
-            run_plugin_command(cli.command, mode);
-        }
-        Some(Commands::External(args)) => plugin::run_external(args, mode),
-        Some(Commands::Connections {
-            state,
-            port,
-            process,
-            proto,
-        }) => {
-            let filter = connections::ConnFilter {
+            }) => {
+                http_client::run(
+                    &url,
+                    &method,
+                    headers,
+                    body,
+                    Duration::from_secs(timeout),
+                    proxy,
+                    no_proxy,
+                    show_headers,
+                    body_limit,
+                    mode,
+                )
+                .await
+            }
+            Some(Commands::Install { name, path, force }) => {
+                plugin::install(&name, path.as_deref(), force, mode)
+            }
+            Some(Commands::Plugin) => {
+                let cli = PluginCli::parse_from([OsString::from("netutils plugin")]);
+                run_plugin_command(cli.command, mode);
+            }
+            Some(Commands::External(args)) => plugin::run_external(args, mode).await,
+            Some(Commands::Connections {
                 state,
                 port,
                 process,
                 proto,
-            };
-            connections::run(filter, mode)
-        }
-        Some(Commands::Diag) => diag::run(mode).await,
-        Some(Commands::Diagnose { host }) => diagnose::run(&host, mode).await,
-        Some(Commands::Path {
-            url,
-            max_hops,
-            timeout,
-            proxy,
-            no_proxy,
-        }) => {
-            path::run(
-                &url,
+            }) => {
+                let filter = connections::ConnFilter {
+                    state,
+                    port,
+                    process,
+                    proto,
+                };
+                connections::run(filter, mode)
+            }
+            Some(Commands::Diag) => diag::run(mode).await,
+            Some(Commands::Diagnose { host }) => diagnose::run(&host, mode).await,
+            Some(Commands::Path {
+                url,
                 max_hops,
-                Duration::from_secs(timeout),
+                timeout,
                 proxy,
                 no_proxy,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::ProxyTest {
-            target,
-            proxy,
-            no_system_proxy,
-            timeout,
-            count,
-            concurrency,
-        }) => {
-            proxy_test::run(
-                &target,
+            }) => {
+                path::run(
+                    &url,
+                    max_hops,
+                    Duration::from_secs(timeout),
+                    proxy,
+                    no_proxy,
+                    mode,
+                )
+                .await
+            }
+            Some(Commands::ProxyTest {
+                target,
                 proxy,
                 no_system_proxy,
-                Duration::from_secs(timeout),
+                timeout,
                 count,
                 concurrency,
-                mode,
-            )
-            .await
-        }
-        Some(Commands::Tls {
-            target,
-            port,
-            sni,
-            timeout,
-            alpn,
-        }) => {
-            tls_probe::run(
-                &target,
+            }) => {
+                proxy_test::run(
+                    &target,
+                    proxy,
+                    no_system_proxy,
+                    Duration::from_secs(timeout),
+                    count,
+                    concurrency,
+                    mode,
+                )
+                .await
+            }
+            Some(Commands::Tls {
+                target,
                 port,
                 sni,
-                Duration::from_secs(timeout),
-                &alpn,
-                mode,
-            )
-            .await
+                timeout,
+                alpn,
+            }) => {
+                tls_probe::run(
+                    &target,
+                    port,
+                    sni,
+                    Duration::from_secs(timeout),
+                    &alpn,
+                    mode,
+                )
+                .await
+            }
         }
+    };
+
+    if let Some(seconds) = total_timeout {
+        if tokio::time::timeout(Duration::from_secs(seconds), command)
+            .await
+            .is_err()
+        {
+            output::print_timeout_error(mode, seconds);
+        }
+    } else {
+        command.await;
     }
 
+    output::exit_if_failed();
     Ok(())
 }
 
@@ -249,7 +267,9 @@ fn plugin_command_position(args: &[OsString]) -> Option<usize> {
         match arg.as_ref() {
             "--json" => i += 1,
             "--lang" => i += 2,
+            "--total-timeout" => i += 2,
             _ if arg.starts_with("--lang=") => i += 1,
+            _ if arg.starts_with("--total-timeout=") => i += 1,
             _ => return (arg == "plugin").then_some(i),
         }
     }
@@ -274,7 +294,19 @@ fn plugin_help_parse_args(args: &[OsString]) -> Option<Vec<OsString>> {
                 parsed.push(args[i + 1].clone());
                 i += 2;
             }
+            "--total-timeout" => {
+                if i + 1 >= args.len() {
+                    return None;
+                }
+                parsed.push(args[i].clone());
+                parsed.push(args[i + 1].clone());
+                i += 2;
+            }
             _ if arg.starts_with("--lang=") => {
+                parsed.push(args[i].clone());
+                i += 1;
+            }
+            _ if arg.starts_with("--total-timeout=") => {
                 parsed.push(args[i].clone());
                 i += 1;
             }
@@ -346,6 +378,13 @@ mod tests {
         let args = args(&["netutils", "--json", "--lang", "zh", "plugin", "list"]);
 
         assert_eq!(plugin_command_position(&args), Some(4));
+    }
+
+    #[test]
+    fn finds_plugin_after_total_timeout() {
+        let args = args(&["netutils", "--total-timeout", "5", "plugin", "list"]);
+
+        assert_eq!(plugin_command_position(&args), Some(3));
     }
 
     #[test]

@@ -88,8 +88,10 @@ impl DnsFamily {
 }
 
 pub async fn run(domain: &str, servers: Vec<String>, mode: OutputMode) {
-    let default_a = query_default_family(domain, DnsFamily::A).await;
-    let default_aaaa = query_default_family(domain, DnsFamily::Aaaa).await;
+    let (default_a, default_aaaa) = tokio::join!(
+        query_default_family(domain, DnsFamily::A),
+        query_default_family(domain, DnsFamily::Aaaa)
+    );
 
     let mut candidates = VecDeque::new();
     for server in servers {
@@ -105,14 +107,44 @@ pub async fn run(domain: &str, servers: Vec<String>, mode: OutputMode) {
     let default_aaaa_set = value_set(&default_aaaa.values);
 
     let mut seen = HashSet::new();
-    let mut results = Vec::new();
+    let mut queries = tokio::task::JoinSet::new();
+    let mut index = 0usize;
     while let Some((server, source)) = candidates.pop_front() {
         if !seen.insert(server.clone()) {
             continue;
         }
-        let a = query_via_server_family(domain, &server, DnsFamily::A).await;
-        let aaaa = query_via_server_family(domain, &server, DnsFamily::Aaaa).await;
-        let route = crate::route_probe::route_to_target(&server);
+        if index >= 16 {
+            break;
+        }
+        let domain = domain.to_string();
+        let task_index = index;
+        queries.spawn(async move {
+            let (a, aaaa) = tokio::join!(
+                query_via_server_family(&domain, &server, DnsFamily::A),
+                query_via_server_family(&domain, &server, DnsFamily::Aaaa)
+            );
+            let route_server = server.clone();
+            let route = tokio::task::spawn_blocking(move || {
+                crate::route_probe::route_to_target(&route_server)
+            })
+            .await
+            .ok()
+            .flatten();
+            (task_index, server, source, a, aaaa, route)
+        });
+        index += 1;
+    }
+
+    let mut completed = Vec::new();
+    while let Some(result) = queries.join_next().await {
+        if let Ok(result) = result {
+            completed.push(result);
+        }
+    }
+    completed.sort_by_key(|result| result.0);
+
+    let mut results = Vec::new();
+    for (_, server, source, a, aaaa, route) in completed {
         let (route_interface, gateway) = match route {
             Some(route) => (route.interface, route.gateway),
             None => (None, None),
@@ -137,10 +169,14 @@ pub async fn run(domain: &str, servers: Vec<String>, mode: OutputMode) {
         default_aaaa,
         results,
         notes: vec![
-            "Default resolve uses the resolver path chosen by the OS/runtime; direct rows query a specific DNS server over UDP/53.".to_string(),
+            "Default resolve uses the operating-system resolver; direct rows query a specific DNS server over UDP/53.".to_string(),
             "A and AAAA are compared separately because IPv4 and IPv6 answers often differ in CDN, split DNS, ECS, proxy DNS, or local cache behavior.".to_string(),
         ],
     };
+
+    if !report.default_a.ok && !report.default_aaaa.ok {
+        crate::output::mark_failure();
+    }
 
     if mode == OutputMode::Json {
         print_json(&report);
@@ -150,11 +186,7 @@ pub async fn run(domain: &str, servers: Vec<String>, mode: OutputMode) {
 }
 
 async fn query_default_family(domain: &str, family: DnsFamily) -> DnsFamilyResult {
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match query_with_resolver(&resolver, domain, family).await {
-        result if result.ok || result.error.as_deref() == Some("timeout") => result,
-        _ => query_system_family(domain, family).await,
-    }
+    query_system_family(domain, family).await
 }
 
 async fn query_system_family(domain: &str, family: DnsFamily) -> DnsFamilyResult {

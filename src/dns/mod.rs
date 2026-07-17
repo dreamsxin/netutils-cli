@@ -7,7 +7,6 @@ use crate::i18n::t;
 use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
-use trust_dns_resolver::config::*;
 use trust_dns_resolver::proto::rr::{RData, RecordType};
 use trust_dns_resolver::TokioAsyncResolver;
 
@@ -42,6 +41,7 @@ impl DnsRecordType {
 pub struct DnsOutput {
     pub domain: String,
     pub record_type: String,
+    pub resolver: String,
     pub records: Vec<DnsRecord>,
     pub elapsed_ms: f64,
 }
@@ -59,7 +59,18 @@ pub async fn run(
     server: Option<String>,
     mode: OutputMode,
 ) {
-    let resolver = build_resolver(server.as_deref());
+    let resolver = match build_resolver(server.as_deref()) {
+        Ok(resolver) => resolver,
+        Err(err) => {
+            crate::output::mark_failure();
+            if mode == OutputMode::Json {
+                print_json_error(&err);
+            } else {
+                println!("  {}", err.red());
+            }
+            return;
+        }
+    };
 
     let type_str = match record_type {
         DnsRecordType::A => "A",
@@ -79,6 +90,7 @@ pub async fn run(
             let output = DnsOutput {
                 domain: domain.to_string(),
                 record_type: type_str.to_string(),
+                resolver: server.unwrap_or_else(|| "system".to_string()),
                 elapsed_ms: elapsed.as_secs_f64() * 1000.0,
                 records: records.clone(),
             };
@@ -121,6 +133,7 @@ pub async fn run(
         }
         Err(e) => {
             let msg = t("dns.fail").replace("{0}", &e);
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&msg);
             } else {
@@ -131,7 +144,7 @@ pub async fn run(
 }
 
 /// 构建 DNS resolver，支持自定义服务器
-fn build_resolver(server: Option<&str>) -> TokioAsyncResolver {
+fn build_resolver(server: Option<&str>) -> Result<TokioAsyncResolver, String> {
     match server {
         Some(addr) => {
             use std::net::SocketAddr;
@@ -139,11 +152,11 @@ fn build_resolver(server: Option<&str>) -> TokioAsyncResolver {
             use trust_dns_resolver::config::*;
 
             // 解析服务器地址，默认端口 53
-            let socket_addr = if addr.contains(':') {
-                SocketAddr::from_str(addr).unwrap_or_else(|_| SocketAddr::from(([8, 8, 8, 8], 53)))
+            let socket_addr = if let Ok(ip) = addr.parse::<std::net::IpAddr>() {
+                SocketAddr::new(ip, 53)
             } else {
-                SocketAddr::from_str(&format!("{}:53", addr))
-                    .unwrap_or_else(|_| SocketAddr::from(([8, 8, 8, 8], 53)))
+                SocketAddr::from_str(addr)
+                    .map_err(|err| format!("invalid DNS server `{addr}`: {err}"))?
             };
 
             let name_server = NameServerConfig {
@@ -155,9 +168,10 @@ fn build_resolver(server: Option<&str>) -> TokioAsyncResolver {
             };
 
             let config = ResolverConfig::from_parts(None, vec![], vec![name_server]);
-            TokioAsyncResolver::tokio(config, ResolverOpts::default())
+            Ok(TokioAsyncResolver::tokio(config, ResolverOpts::default()))
         }
-        None => TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default()),
+        None => TokioAsyncResolver::tokio_from_system_conf()
+            .map_err(|err| format!("failed to load system DNS configuration: {err}")),
     }
 }
 

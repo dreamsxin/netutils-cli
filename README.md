@@ -60,7 +60,12 @@ cargo build --release
 
 # Help
 ./target/release/netutils --help
+
+# Put a hard limit on the whole command (exit code 124 on timeout)
+./target/release/netutils --total-timeout 30 diagnose example.com
 ```
+
+Default hostname resolution uses the operating-system resolver, including local hosts, VPN/split-DNS, and system cache behavior. Public resolvers are contacted only when explicitly selected with options such as `--server`.
 
 ### One-Click Diagnostics
 
@@ -166,6 +171,8 @@ netutils proxy-test https://www.google.com --proxy socks5h://127.0.0.1:1080 --co
 
 `proxy-test` checks whether a hostname request through the proxy succeeds, then shows local DNS answers, the local route to the proxy entrypoint, and proxy TCP reachability. With `--count` it also reports success rate, HTTP status/error counts, and min/average/P50/P95/P99/max request latency. Fewer than 5 samples are not classified; otherwise a sample is `stable` when the success rate is at least 99% and P95 is no more than `2 * P50 + 250ms`. HTTP 407 and 5xx responses count as failures. Most proxy protocols do not expose the exact IP resolved inside the proxy, so the result is an availability inference rather than a remote DNS answer dump. Proxy credentials are redacted from table and JSON output.
 
+System proxy selection is target-aware: HTTP and HTTPS settings are selected separately, while `NO_PROXY` and platform bypass lists are honored. PAC/WPAD settings are displayed by `netutils proxy`, but are not executed by the built-in HTTP client.
+
 When you need to inspect TLS handshake, SNI, certificate chain, ALPN, or certificate validity:
 
 ```bash
@@ -243,7 +250,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `chrome-proxy`, `mcp`, `sse`, `subdomain`, and `ws`. `install` and `update` refuse to install a known plugin when the current platform is not supported by that plugin. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation; `plugin list` reads it to show version, source, and status. `plugin update <name>` reinstalls with force enabled, and both `plugin update all` and `plugin update-all` update every known plugin; `remove` checks that the target path is inside the plugin directory before deleting it. When dispatching a plugin command, the core sets `NETUTILS_OUTPUT`, `NETUTILS_COLOR`, `NETUTILS_CORE_VERSION`, and `NETUTILS_PLUGIN_NAME` so Rust and non-Rust plugins can follow the same I/O contract.
+`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `chrome-proxy`, `mcp`, `sse`, `subdomain`, and `ws`. Registry installation is always used unless `--path <plugin-crate>` is explicitly supplied. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation. When dispatching a plugin command, the core also passes `NETUTILS_EFFECTIVE_PROXY` when a target-specific system proxy was selected.
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 
@@ -258,7 +265,9 @@ netutils path https://myip.ipipv.com --proxy http://127.0.0.1:7897
 netutils path https://myip.ipipv.com --no-proxy
 ```
 
-In proxy mode, `path` also shows `Proxy Connect`, which measures the TCP connect time from the local host to the proxy entrypoint. Downstream DNS, CONNECT, or remote egress phases may be hidden by the proxy or TUN client, so the tool also reports local egress and quick trace for context.
+In proxy mode, `path` traces the local path to the proxy entrypoint and labels proxy-side DNS and downstream hops as hidden. It no longer presents a locally resolved target trace as the actual proxy path.
+
+Command exit codes are `0` for a successful probe, `1` for a completed failure, `2` for CLI usage errors, and `124` when `--total-timeout` expires. Authentication headers, cookies, API keys, tokens, and proxy credentials are redacted from reports by default.
 
 ### Key Features
 

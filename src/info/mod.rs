@@ -140,7 +140,11 @@ pub fn print_interfaces(mode: OutputMode) {
     let h_ipv4 = t("iface.ipv4");
     let h_status = t("iface.status");
     let h_type = t("iface.type");
-    let h_metric = t("iface.metric");
+    let h_metric = if cfg!(target_os = "macos") {
+        "Service Order".to_string()
+    } else {
+        t("iface.metric")
+    };
     let h_egress = t("iface.egress");
     let headers = [
         h_name.as_str(),
@@ -163,7 +167,7 @@ pub fn print_interfaces(mode: OutputMode) {
                 "Down".red().to_string()
             };
             let metric_str = if iface.metric == 0 {
-                "0 *".to_string()
+                "--".to_string()
             } else {
                 iface.metric.to_string()
             };
@@ -279,7 +283,11 @@ pub fn print_routes(mode: OutputMode) {
     let h_dest = t("route.dest");
     let h_gw = t("route.gateway");
     let h_iface = t("route.interface");
-    let h_metric = t("route.metric");
+    let h_metric = if cfg!(target_os = "macos") {
+        "Service Order".to_string()
+    } else {
+        t("route.metric")
+    };
     let headers = [
         h_dest.as_str(),
         h_gw.as_str(),

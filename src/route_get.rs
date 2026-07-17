@@ -40,6 +40,7 @@ pub async fn run(target: &str, max_hops: u32, no_trace: bool, mode: OutputMode) 
     let ips = crate::util::resolve_host_all(target).await;
     if ips.is_empty() {
         let msg = format!("resolve failed: {}", target);
+        crate::output::mark_failure();
         if mode == OutputMode::Json {
             print_json_error(&msg);
         } else {

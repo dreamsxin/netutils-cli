@@ -6,8 +6,6 @@ use std::time::{Duration, Instant};
 
 use colored::*;
 use serde::Serialize;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
 
 use crate::output::{print_json, OutputMode};
 use crate::table::print_table;
@@ -120,7 +118,7 @@ pub async fn run(
     let proxy_value = if no_system_proxy {
         proxy
     } else {
-        proxy.or_else(crate::util::get_system_proxy_addr)
+        proxy.or_else(|| crate::util::get_system_proxy_for_url(&url))
     };
 
     let endpoint = proxy_value.as_deref().and_then(parse_proxy_endpoint);
@@ -221,6 +219,9 @@ pub async fn run(
 }
 
 fn output(report: ProxyTestReport, mode: OutputMode) {
+    if !report.proxy_request.ok {
+        crate::output::mark_failure();
+    }
     if mode == OutputMode::Json {
         print_json(&report);
     } else {
@@ -322,20 +323,7 @@ async fn resolve_local(host: &str, timeout: Duration) -> LocalResolve {
 }
 
 async fn resolve_fast(host: &str, timeout: Duration) -> Vec<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return vec![ip];
-    }
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match tokio::time::timeout(timeout, resolver.lookup_ip(host)).await {
-        Ok(Ok(ips)) => dedup_ips(ips.iter().collect()),
-        Ok(Err(_)) | Err(_) => Vec::new(),
-    }
-}
-
-fn dedup_ips(ips: Vec<IpAddr>) -> Vec<IpAddr> {
-    let mut seen = std::collections::HashSet::new();
-    ips.into_iter().filter(|ip| seen.insert(*ip)).collect()
+    crate::util::resolve_host_all_timeout(host, timeout).await
 }
 
 async fn run_request(

@@ -78,6 +78,10 @@ pub async fn run(mode: OutputMode) {
         elapsed_secs: elapsed.as_secs_f64(),
     };
 
+    if report.items.iter().any(|item| !item.ok && !item.warning) {
+        crate::output::mark_failure();
+    }
+
     if mode == OutputMode::Json {
         print_json(&report);
         return;
@@ -336,35 +340,21 @@ async fn check_http_single(url: &str) -> DiagItem {
 
 /// 检测 IPv6
 async fn check_ipv6() -> DiagItem {
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::TokioAsyncResolver;
-
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-
-    match tokio::time::timeout(DIAG_IPV6_TIMEOUT, resolver.ipv6_lookup("baidu.com")).await {
-        Ok(Ok(ips)) => {
-            if ips.iter().next().is_some() {
-                DiagItem {
-                    check: t("diag.check_ipv6"),
-                    ok: true,
-                    warning: false,
-                    message: t("diag.ipv6_ok"),
-                }
-            } else {
-                DiagItem {
-                    check: t("diag.check_ipv6"),
-                    ok: false,
-                    warning: false,
-                    message: t("diag.ipv6_fail"),
-                }
-            }
+    let ips = crate::util::resolve_host_all_timeout("baidu.com", DIAG_IPV6_TIMEOUT).await;
+    if ips.iter().any(|ip| ip.is_ipv6()) {
+        DiagItem {
+            check: t("diag.check_ipv6"),
+            ok: true,
+            warning: false,
+            message: t("diag.ipv6_ok"),
         }
-        Ok(Err(_)) | Err(_) => DiagItem {
+    } else {
+        DiagItem {
             check: t("diag.check_ipv6"),
             ok: false,
             warning: false,
             message: t("diag.ipv6_fail"),
-        },
+        }
     }
 }
 

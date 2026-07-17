@@ -60,7 +60,12 @@ cargo build --release
 
 # 查看帮助
 ./target/release/netutils --help
+
+# 限制整条命令最长执行时间，超时退出码为 124
+./target/release/netutils --total-timeout 30 diagnose example.com
 ```
+
+默认域名解析使用操作系统 resolver，会遵循本地 hosts、VPN/split-DNS 和系统缓存。只有显式传入 `--server` 等参数时才会直查公共 DNS。
 
 ### Windows 下跨平台编译测试
 
@@ -211,6 +216,8 @@ netutils proxy-test https://www.google.com --proxy socks5h://127.0.0.1:1080 --co
 
 `proxy-test` 能判断“通过代理用域名访问是否成功”，并显示本地 DNS 结果、代理入口路由和代理入口 TCP 连通性。使用 `--count` 后还会统计成功率、HTTP 状态/错误次数以及最小、平均、P50、P95、P99、最大请求耗时。少于 5 个样本时不判定稳定性；样本足够时，成功率至少 99% 且 P95 不超过 `2 * P50 + 250ms` 才判定为 `stable`。HTTP 407 和 5xx 响应计为失败。大多数代理协议不会把代理内部最终解析出的 IP 返回给客户端，因此这里的结论是代理侧 DNS 可用性推断，而不是读取代理 DNS 的精确返回值。表格和 JSON 输出中的代理凭据会被脱敏。
 
+系统代理会按目标协议分别选择 HTTP/HTTPS 配置，并遵循 `NO_PROXY` 和系统 bypass 列表。`netutils proxy` 会显示 PAC/WPAD 配置，但内置 HTTP client 暂不执行 PAC 脚本。
+
 当需要排查 TLS 握手、SNI、证书链、ALPN 或证书有效期时：
 
 ```bash
@@ -298,7 +305,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` 会列出核心内置的已知插件，也就是当前可直接通过 `netutils install <name>` 安装的插件，并显示支持平台、当前主机是否支持、本机是否已安装、版本、来源和二进制路径。当前已知插件包括 `chrome-proxy`、`mcp`、`sse`、`subdomain` 和 `ws`。如果某个已知插件不支持当前平台，`install` 和 `update` 会直接拒绝安装。`install` 成功后会在插件安装目录写入 `plugin-lock.json`，记录来源、版本、二进制路径和安装时 core 版本；`plugin list` 会优先读取该记录显示版本、来源和状态。`plugin update <name>` 等价于重新安装并强制覆盖，`plugin update all` 和 `plugin update-all` 都会更新所有已知插件；`remove` 会校验目标路径在插件目录内再删除。核心转发插件命令时会设置 `NETUTILS_OUTPUT`、`NETUTILS_COLOR`、`NETUTILS_CORE_VERSION` 和 `NETUTILS_PLUGIN_NAME`，方便 Rust 或非 Rust 插件遵守统一输入输出协议。
+`plugin list` 会列出核心内置的已知插件。除非显式传入 `--path <插件 crate>`，`netutils install <name>` 始终从 crates.io 安装，不再自动查找相邻本地仓库。安装成功后会写入 `plugin-lock.json`。核心转发插件命令时还会在已选中目标系统代理时设置 `NETUTILS_EFFECTIVE_PROXY`。
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 
@@ -313,7 +320,9 @@ netutils path https://myip.ipipv.com --proxy http://127.0.0.1:7897
 netutils path https://myip.ipipv.com --no-proxy
 ```
 
-代理模式下会额外显示 `Proxy Connect`，表示本机到代理入口的 TCP 连接耗时。目标侧 DNS、CONNECT、远端出口等阶段可能由代理/TUN 客户端隐藏，因此工具会同时给出本机出口和 trace 视角。
+代理模式下，`path` 的 trace 明确表示“本机到代理入口”，目标 DNS 和代理后的跳点会标为不可见，不再把本地解析目标的 trace 当作实际代理链路。
+
+命令退出码约定：成功为 `0`，检测完成但失败为 `1`，CLI 参数错误为 `2`，`--total-timeout` 到期为 `124`。报告默认脱敏认证头、Cookie、API key、token 和代理凭据。
 
 ### 核心特性
 

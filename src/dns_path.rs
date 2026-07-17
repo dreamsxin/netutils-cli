@@ -101,6 +101,16 @@ pub async fn run(domain: Option<String>, server: Option<String>, mode: OutputMod
         ],
     };
 
+    if report.domain.is_some()
+        && report
+            .servers
+            .iter()
+            .filter_map(|server| server.query.as_ref())
+            .all(|query| !query.ok)
+    {
+        crate::output::mark_failure();
+    }
+
     if mode == OutputMode::Json {
         print_json(&report);
     } else {
@@ -187,6 +197,7 @@ fn dedup_servers(servers: &mut Vec<DnsServer>) {
     servers.retain(|server| seen.insert(server.server.clone()));
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn is_placeholder_dns_server(server: &str) -> bool {
     matches!(
         server.trim().to_ascii_lowercase().as_str(),

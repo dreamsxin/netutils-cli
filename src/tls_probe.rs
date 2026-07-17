@@ -7,8 +7,6 @@ use std::time::{Duration, Instant};
 use colored::*;
 use serde::Serialize;
 use tokio_rustls::TlsConnector;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
 use x509_parser::prelude::*;
 
 use crate::output::{print_json, OutputMode};
@@ -336,9 +334,7 @@ pub async fn run(
 }
 
 fn build_connector(alpn_protocols: &[Vec<u8>]) -> Result<TlsConnector, rustls::Error> {
-    let root_store = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-    };
+    let root_store = crate::util::system_root_store();
     let mut config = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -350,19 +346,7 @@ fn build_connector(alpn_protocols: &[Vec<u8>]) -> Result<TlsConnector, rustls::E
 }
 
 async fn resolve_fast(host: &str, timeout: Duration) -> Vec<IpAddr> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return vec![ip];
-    }
-    let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default());
-    match tokio::time::timeout(timeout, resolver.lookup_ip(host)).await {
-        Ok(Ok(ips)) => dedup_ips(ips.iter().collect()),
-        Ok(Err(_)) | Err(_) => Vec::new(),
-    }
-}
-
-fn dedup_ips(ips: Vec<IpAddr>) -> Vec<IpAddr> {
-    let mut seen = std::collections::HashSet::new();
-    ips.into_iter().filter(|ip| seen.insert(*ip)).collect()
+    crate::util::resolve_host_all_timeout(host, timeout).await
 }
 
 fn parse_certificate(position: usize, der: &[u8]) -> CertificateInfo {
@@ -477,6 +461,9 @@ fn notes() -> Vec<String> {
 }
 
 fn output(report: TlsReport, mode: OutputMode) {
+    if !report.success {
+        crate::output::mark_failure();
+    }
     if mode == OutputMode::Json {
         print_json(&report);
     } else {

@@ -409,6 +409,7 @@ fn parse_macos_cachedump(text: &str) -> Vec<DnsCacheEntry> {
     entries
 }
 
+#[allow(clippy::needless_return)]
 fn flush_dns_cache() -> FlushReport {
     #[cfg(target_os = "windows")]
     {

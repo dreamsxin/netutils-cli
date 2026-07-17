@@ -71,6 +71,10 @@ pub async fn run(host: &str, mode: OutputMode) {
         elapsed_secs: elapsed.as_secs_f64(),
     };
 
+    if report.steps.iter().any(|step| !step.ok && !step.warning) {
+        crate::output::mark_failure();
+    }
+
     if mode == OutputMode::Json {
         print_json(&report);
         return;
@@ -545,7 +549,7 @@ fn trace_hop_simple_blocking(target: std::net::Ipv4Addr, ttl: u32) -> SimpleHop 
 /// 根据各步骤状态自动推导结论
 fn derive_conclusion(steps: &[DiagStep]) -> String {
     // steps: [dns, ping, tcp, https, trace]
-    let dns_ok = steps.get(0).map(|s| s.ok).unwrap_or(false);
+    let dns_ok = steps.first().map(|s| s.ok).unwrap_or(false);
     let ping_ok = steps.get(1).map(|s| s.ok).unwrap_or(false);
     let tcp_ok = steps.get(2).map(|s| s.ok).unwrap_or(false);
     let https_ok = steps.get(3).map(|s| s.ok).unwrap_or(false);

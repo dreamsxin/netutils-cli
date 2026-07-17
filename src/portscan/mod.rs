@@ -66,6 +66,7 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     let targets = crate::util::resolve_host_all(host).await;
     if targets.is_empty() {
         let msg = t1("scan.resolve_fail", host);
+        crate::output::mark_failure();
         if mode == OutputMode::Json {
             print_json_error(&msg);
         } else {

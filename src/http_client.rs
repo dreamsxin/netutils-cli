@@ -52,6 +52,7 @@ pub struct HttpTimings {
     pub total_ms: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     input_url: &str,
     method: &str,
@@ -96,12 +97,12 @@ pub async fn run(
         }
     };
     let request_headers = headers_to_vec(&headers);
-    let request_body_bytes = body.as_ref().map(|body| body.as_bytes().len()).unwrap_or(0);
+    let request_body_bytes = body.as_ref().map(|body| body.len()).unwrap_or(0);
 
     let proxy_value = if no_proxy {
         None
     } else {
-        proxy.or_else(crate::util::get_system_proxy_addr)
+        proxy.or_else(|| crate::util::get_system_proxy_for_url(&url))
     };
     let proxy_info = HttpProxy {
         mode: if no_proxy {
@@ -111,7 +112,9 @@ pub async fn run(
         } else {
             "direct".to_string()
         },
-        value: proxy_value.clone(),
+        value: proxy_value
+            .as_deref()
+            .map(crate::util::redact_url_credentials),
     };
 
     let client = match build_client(timeout, proxy_value.as_deref()) {
@@ -278,7 +281,10 @@ fn headers_to_vec(headers: &HeaderMap) -> Vec<HttpHeader> {
         .iter()
         .map(|(name, value)| HttpHeader {
             name: name.to_string(),
-            value: value.to_str().unwrap_or("<non-utf8>").to_string(),
+            value: crate::util::redact_header_value(
+                name.as_str(),
+                value.to_str().unwrap_or("<non-utf8>"),
+            ),
         })
         .collect()
 }
@@ -312,6 +318,7 @@ fn error_report(input_url: &str, url: &str, method: &str, error: String) -> Http
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn report_with_response(
     input_url: &str,
     url: &str,
@@ -339,6 +346,9 @@ fn report_with_response(
 }
 
 fn output(report: HttpReport, mode: OutputMode) {
+    if !report.response.ok {
+        crate::output::mark_failure();
+    }
     if mode == OutputMode::Json {
         print_json(&report);
     } else {

@@ -50,6 +50,7 @@ pub struct CheckStats {
 }
 
 /// 执行连通性测试
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     target: &str,
     count: u32,
@@ -126,6 +127,7 @@ async fn run_tcp(target: &str, count: u32, connect_timeout: Duration, mode: Outp
     let (host, port) = match parse_host_port(target) {
         Some(hp) => hp,
         None => {
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&t("check.format_err"));
             } else {
@@ -216,6 +218,10 @@ async fn run_tcp(target: &str, count: u32, connect_timeout: Duration, mode: Outp
         stats: stats.clone(),
     };
 
+    if output.stats.success == 0 {
+        crate::output::mark_failure();
+    }
+
     if mode == OutputMode::Json {
         print_json(&output);
         return;
@@ -225,6 +231,7 @@ async fn run_tcp(target: &str, count: u32, connect_timeout: Duration, mode: Outp
 }
 
 /// HTTP 连通性测试（自动检测并使用系统代理）
+#[allow(clippy::too_many_arguments)]
 async fn run_http(
     url: &str,
     count: u32,
@@ -241,7 +248,7 @@ async fn run_http(
     } else if no_proxy {
         None
     } else {
-        crate::util::get_system_proxy_addr()
+        crate::util::get_system_proxy_for_url(url)
     };
     // --timing 仅在直连 HTTPS 时生效，有代理时静默忽略
     let can_breakdown = timing && proxy_addr.is_none() && url.starts_with("https://");
@@ -260,6 +267,7 @@ async fn run_http(
                     Ok(Ok(_)) => {} // 代理端口可达，继续
                     _ => {
                         let msg = format!("代理不可达: {}", proxy_url);
+                        crate::output::mark_failure();
                         if mode == OutputMode::Json {
                             print_json_error(&msg);
                         } else {
@@ -272,6 +280,7 @@ async fn run_http(
             None => {
                 // 代理地址格式无效（如端口超范围），直接报错
                 let msg = format!("代理地址无效: {}", proxy_url);
+                crate::output::mark_failure();
                 if mode == OutputMode::Json {
                     print_json_error(&msg);
                 } else {
@@ -315,8 +324,6 @@ async fn run_http(
             let sem = sem.clone();
             let url = url.clone();
             let client = client.clone();
-            let connect_timeout = connect_timeout;
-            let can_breakdown = can_breakdown;
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await.unwrap();
@@ -357,7 +364,7 @@ async fn run_http(
     if is_concurrent && mode == OutputMode::Table {
         probes.sort_by_key(|p| p.rtt_ms as u64); // 按延迟排序展示
         for (i, probe) in probes.iter().enumerate() {
-            print_probe(probe, i as u32, count as u32, &proxy_tag);
+            print_probe(probe, i as u32, count, &proxy_tag);
         }
     }
 
@@ -372,6 +379,10 @@ async fn run_http(
         probes: probes.clone(),
         stats: stats.clone(),
     };
+
+    if output.stats.success == 0 {
+        crate::output::mark_failure();
+    }
 
     if mode == OutputMode::Json {
         print_json(&output);
@@ -483,11 +494,12 @@ fn print_concurrent_stats(probes: &[CheckProbe], concurrency: usize) {
     let h_metric = t("common.metric");
     let h_value = t("proxy.value");
     let headers = [h_metric.as_str(), h_value.as_str()];
-    let mut rows = Vec::new();
-    rows.push(vec![t("check.concurrency"), concurrency.to_string()]);
-    rows.push(vec![t("check.total_reqs"), total.to_string()]);
-    rows.push(vec![t("check.success_reqs"), success.to_string()]);
-    rows.push(vec![t("check.fail_reqs"), (total - success).to_string()]);
+    let mut rows = vec![
+        vec![t("check.concurrency"), concurrency.to_string()],
+        vec![t("check.total_reqs"), total.to_string()],
+        vec![t("check.success_reqs"), success.to_string()],
+        vec![t("check.fail_reqs"), (total - success).to_string()],
+    ];
 
     if !rtts.is_empty() {
         let stats = crate::util::compute_stats(&rtts);
@@ -588,9 +600,7 @@ async fn run_http_timing(
 
     // ③ TLS Handshake
     let t2 = Instant::now();
-    let root_store = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-    };
+    let root_store = crate::util::system_root_store();
     let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
     ))

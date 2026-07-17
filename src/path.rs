@@ -20,6 +20,8 @@ pub struct PathReport {
     pub proxy: ProxyPath,
     pub egress: Option<EgressPath>,
     pub redirects: Vec<RedirectHop>,
+    pub network_path_target: Option<String>,
+    pub network_path_scope: String,
     pub network_path: Vec<TraceHopPath>,
     pub http: HttpPath,
     pub note: String,
@@ -28,6 +30,7 @@ pub struct PathReport {
 #[derive(Serialize)]
 pub struct DnsPath {
     pub host: String,
+    pub mode: String,
     pub ips: Vec<String>,
 }
 
@@ -101,6 +104,7 @@ pub async fn run(
         Some(parsed) => parsed,
         None => {
             let msg = format!("invalid URL: {}", input);
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&msg);
             } else {
@@ -113,7 +117,7 @@ pub async fn run(
     let proxy_value = if no_proxy {
         None
     } else {
-        proxy.or_else(crate::util::get_system_proxy_addr)
+        proxy.or_else(|| crate::util::get_system_proxy_for_url(&parsed.normalized))
     };
     let proxy_path = ProxyPath {
         mode: if no_proxy {
@@ -123,13 +127,16 @@ pub async fn run(
         } else {
             "direct".to_string()
         },
-        value: proxy_value.clone(),
+        value: proxy_value
+            .as_deref()
+            .map(crate::util::redact_url_credentials),
     };
 
     let client = match build_client(timeout, proxy_value.as_deref()) {
         Ok(client) => client,
         Err(err) => {
             let msg = format!("failed to build HTTP client: {}", err);
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&msg);
             } else {
@@ -141,8 +148,16 @@ pub async fn run(
 
     let (redirects, final_url) = collect_redirects(&client, &parsed.normalized).await;
     let final_parsed = parse_url(&final_url).unwrap_or(parsed);
+    let remote_dns = proxy_value
+        .as_deref()
+        .map(proxy_resolves_target)
+        .unwrap_or(false);
     let dns_start = Instant::now();
-    let ips = crate::util::resolve_host_all(&final_parsed.host).await;
+    let ips = if remote_dns {
+        Vec::new()
+    } else {
+        crate::util::resolve_host_all(&final_parsed.host).await
+    };
     let dns_ms = dns_start.elapsed().as_secs_f64() * 1000.0;
 
     let interfaces = crate::info::collect_interfaces();
@@ -153,7 +168,15 @@ pub async fn run(
         tun_mode: egress.tun_mode,
     });
 
-    let trace_target = ips.first().copied();
+    let (trace_target, network_path_scope) = if let Some(proxy) = proxy_value.as_deref() {
+        let proxy_target = match parse_proxy_endpoint(proxy) {
+            Some(endpoint) => crate::util::resolve_host(&endpoint.host).await,
+            None => None,
+        };
+        (proxy_target, "local-to-proxy".to_string())
+    } else {
+        (ips.first().copied(), "local-to-target".to_string())
+    };
     let network_path = match trace_target {
         Some(target) => collect_network_path(target, max_hops).await,
         None => Vec::new(),
@@ -176,15 +199,30 @@ pub async fn run(
         final_url: final_parsed.normalized,
         dns: DnsPath {
             host: final_parsed.host,
+            mode: if remote_dns {
+                "proxy-remote".to_string()
+            } else {
+                "local-system".to_string()
+            },
             ips: ips.iter().map(IpAddr::to_string).collect(),
         },
         proxy: proxy_path,
         egress,
         redirects,
+        network_path_target: trace_target.map(|target| target.to_string()),
+        network_path_scope,
         network_path,
         http,
-        note: "Local perspective only; proxy/TUN/CDN paths may hide downstream hops.".to_string(),
+        note: if proxy_value.is_some() {
+            "Proxy mode shows the local path to the proxy entry; downstream proxy DNS and hops are not exposed by common proxy protocols.".to_string()
+        } else {
+            "Local perspective only; TUN/CDN paths may hide downstream hops.".to_string()
+        },
     };
+
+    if !report.http.success {
+        crate::output::mark_failure();
+    }
 
     if mode == OutputMode::Json {
         print_json(&report);
@@ -434,6 +472,14 @@ fn parse_proxy_endpoint(proxy: &str) -> Option<ProxyEndpoint> {
     }
 }
 
+fn proxy_resolves_target(proxy: &str) -> bool {
+    let scheme = proxy
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_ascii_lowercase())
+        .unwrap_or_else(|| "http".to_string());
+    matches!(scheme.as_str(), "http" | "https" | "socks4a" | "socks5h")
+}
+
 async fn manual_timing(
     parsed: &ParsedUrl,
     ips: &[IpAddr],
@@ -501,9 +547,7 @@ async fn timing_https(
     total_start: Instant,
 ) -> HttpPath {
     let tls_start = Instant::now();
-    let root_store = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
-    };
+    let root_store = crate::util::system_root_store();
     let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -693,7 +737,10 @@ fn print_report(report: &PathReport) {
 
     println!();
     println!("{}", "DNS".bold());
-    if report.dns.ips.is_empty() {
+    println!("  Mode: {}", report.dns.mode);
+    if report.dns.mode == "proxy-remote" {
+        println!("  {} -> <resolved by proxy>", report.dns.host);
+    } else if report.dns.ips.is_empty() {
         println!("  {} -> <resolve failed>", report.dns.host);
     } else {
         println!("  {} -> {}", report.dns.host, report.dns.ips.join(", "));
@@ -742,6 +789,10 @@ fn print_report(report: &PathReport) {
 
     println!();
     println!("{}", "Network Path".bold());
+    println!("  Scope: {}", report.network_path_scope);
+    if let Some(target) = &report.network_path_target {
+        println!("  Target: {}", target);
+    }
     if report.network_path.is_empty() {
         println!("  <not available>");
     } else {

@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(long, global = true, value_enum)]
     pub lang: Option<Lang>,
 
+    /// 整条命令的总超时秒数；不指定时仅使用各步骤自身超时
+    #[arg(long, global = true)]
+    pub total_timeout: Option<u64>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -344,6 +348,10 @@ pub struct PluginCli {
     /// 覆盖语言（zh/en），默认自动检测
     #[arg(long, global = true, value_enum)]
     pub lang: Option<Lang>,
+
+    /// 整条命令的总超时秒数（插件管理命令暂不使用）
+    #[arg(long, global = true)]
+    pub total_timeout: Option<u64>,
 
     #[command(subcommand)]
     pub command: PluginCommands,

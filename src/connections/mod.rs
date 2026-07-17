@@ -1,5 +1,7 @@
 //! 网络连接列表模块：显示当前 TCP/UDP 连接。
 
+#![allow(clippy::items_after_test_module)]
+
 use serde::Serialize;
 
 use crate::i18n::t;

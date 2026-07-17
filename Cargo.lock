@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "netutils-cli"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "clap",
@@ -801,6 +801,7 @@ dependencies = [
  "once_cell",
  "reqwest",
  "rustls",
+ "rustls-native-certs",
  "serde",
  "serde_json",
  "socket2",

@@ -146,7 +146,7 @@ pub fn get_route_table() -> Vec<RouteEntry> {
                 route.metric = service_order
                     .get(&route.interface)
                     .map(u32::to_string)
-                    .unwrap_or_else(|| "0".to_string());
+                    .unwrap_or_else(|| "--".to_string());
             }
             routes.sort_by_key(|r| if r.destination == "default" { 0 } else { 1 });
             routes.truncate(20);
@@ -184,7 +184,7 @@ fn parse_macos_netstat_routes(text: &str) -> Vec<RouteEntry> {
                     parts[1].to_string()
                 },
                 interface: parts[3].to_string(),
-                metric: "0".to_string(),
+                metric: "--".to_string(),
             });
         }
     }

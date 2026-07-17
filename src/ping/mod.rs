@@ -46,6 +46,7 @@ pub async fn run(host: &str, count: u32, timeout: Duration, interval: Duration, 
         Some(ip) => ip,
         None => {
             let msg = t("ping.resolve_fail").replace("{0}", host);
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&msg);
             } else {
@@ -73,6 +74,10 @@ pub async fn run(host: &str, count: u32, timeout: Duration, interval: Duration, 
         probes: probes.clone(),
         stats,
     };
+
+    if output.stats.received == 0 {
+        crate::output::mark_failure();
+    }
 
     if mode == OutputMode::Json {
         print_json(&output);

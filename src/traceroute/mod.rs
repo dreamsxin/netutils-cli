@@ -79,6 +79,7 @@ pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
         Some(ip) => ip,
         None => {
             let msg = t1("trace.resolve_fail", host);
+            crate::output::mark_failure();
             if mode == OutputMode::Json {
                 print_json_error(&msg);
             } else {
@@ -129,6 +130,10 @@ pub async fn run(host: &str, max_hops: u32, mode: OutputMode) {
         hops: hops.clone(),
     };
 
+    if !reached_dest && output.hops.iter().all(hop_all_timed_out) {
+        crate::output::mark_failure();
+    }
+
     if mode == OutputMode::Json {
         print_json(&output);
         return;
@@ -177,7 +182,7 @@ fn print_hop_row(hop: &Hop) {
     let ip_str = hop
         .probes
         .iter()
-        .find_map(|p| p.ip.as_ref().map(|ip| ip.clone()))
+        .find_map(|p| p.ip.clone())
         .unwrap_or_else(|| "*".to_string());
     let mut probe_cells = Vec::new();
     for i in 0..PROBES_PER_HOP as usize {
