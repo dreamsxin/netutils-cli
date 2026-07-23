@@ -49,6 +49,7 @@ pub async fn run(mode: OutputMode) {
     tasks.spawn(check_http_single("https://www.baidu.com"));
     tasks.spawn(check_http_single("https://www.google.com"));
     tasks.spawn(check_ipv6());
+    tasks.spawn(check_dns_leak());
 
     let mut items = Vec::new();
 
@@ -354,6 +355,42 @@ async fn check_ipv6() -> DiagItem {
             ok: false,
             warning: false,
             message: t("diag.ipv6_fail"),
+        }
+    }
+}
+
+/// 检测 DNS 泄露（本地路由分析，不做外部探测）
+async fn check_dns_leak() -> DiagItem {
+    let summary = crate::dns_leak::quick_check().await;
+    if summary.total_servers == 0 || summary.known_routes == 0 {
+        return DiagItem {
+            check: t("diag.check_dns_leak"),
+            ok: true,
+            warning: true,
+            message: t("diag.dns_leak_unknown"),
+        };
+    }
+
+    if summary.tun_mode && summary.diverted_routes > 0 {
+        DiagItem {
+            check: t("diag.check_dns_leak"),
+            ok: true,
+            warning: true,
+            message: t1("diag.dns_leak_high", &summary.diverted_routes.to_string()),
+        }
+    } else if summary.diverted_routes > 0 {
+        DiagItem {
+            check: t("diag.check_dns_leak"),
+            ok: true,
+            warning: true,
+            message: t1("diag.dns_leak_medium", &summary.diverted_routes.to_string()),
+        }
+    } else {
+        DiagItem {
+            check: t("diag.check_dns_leak"),
+            ok: true,
+            warning: false,
+            message: t("diag.dns_leak_none"),
         }
     }
 }

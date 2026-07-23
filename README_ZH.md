@@ -21,6 +21,7 @@
 | `dns-cache` | 检查/清理系统 DNS 缓存 | `netutils dns-cache google.com` |
 | `dns-path` | 查看 DNS server 及到 DNS server 的本机路由 | `netutils dns-path google.com` |
 | `dns-compare` | 对比系统默认解析与指定 DNS server 直查结果 | `netutils dns-compare google.com --server 8.8.8.8` |
+| `dns-leak` | 检测 DNS 是否泄露（查询是否绕过 VPN/TUN/代理） | `netutils dns-leak` |
 | `proxy-test` | 检查代理连通性、DNS 行为和请求稳定性 | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS 握手与证书诊断 | `netutils tls google.com --sni google.com` |
 | `trace` | 路由追踪 | `netutils trace baidu.com` |
@@ -197,6 +198,28 @@ netutils dns-cache google.com --flush
 netutils dns-path google.com
 netutils dns-path google.com --server 8.8.8.8
 ```
+
+当需要检查 DNS 查询是否绕过 VPN、TUN 或代理路径时：
+
+```bash
+# 使用当前系统网络和系统代理设置
+netutils dns-leak
+
+# 通过显式远程 DNS 代理观察 resolver
+netutils dns-leak --proxy socks5h://127.0.0.1:1080
+
+# 每个 DNS 探针并发执行 5 个样本（默认 3，范围 1-10）
+netutils dns-leak --proxy socks5h://127.0.0.1:1080 --count 5
+
+# 只分析本机 DNS server 和路由，不访问外部探测服务
+netutils dns-leak --no-external
+```
+
+`dns-leak` 会并发执行两组 resolver 探针。Surfshark 探针查询随机的 `*.ipv4.surfsharkdns.com` 域名，显示 resolver IP、ISP、国家、城市和供应商返回的 `Leak` 标记；`ip-api-edns` 探针从 `https://edns.ip-api.com/json` 发起请求，跟随服务端生成的随机域名跳转，显示 resolver IP、国家和组织。`--count 1..10` 控制每个提供商的样本数，因此默认值 3 表示分别执行 3 个 Surfshark 和 3 个 ip-api-edns 样本。同时使用 `whoami.akamai.net` 的 A 记录作为辅助 resolver 观测，并仅使用 Cloudflare trace 获取 HTTP 公网出口。resolver IP 与 HTTP 出口 IP 会分别展示，不再假设两者必须相同。HTTP 探针会遵循显式代理或系统代理，因此 HTTP 和 `socks5h` 代理可以反映代理侧 DNS 行为；使用 `--no-proxy` 可强制直连。
+
+对于 HTTP 和 `socks5h` 远程 DNS 代理，Surfshark 与 ip-api-edns 的 resolver 观测会合并判断。全部样本成功且国家一致时，多个 resolver IP 会被视为正常地址池；同一国家内如果 Surfshark 返回了不同的已知城市，也视为泄露信号。跨国家或跨已知城市时判定为 DNS 泄露。国家信息缺失或部分样本失败时返回 `low`（证据不足）。Surfshark 的 `Leak` 字段仍会展示，但在远程 DNS 代理模式下不会覆盖地理一致性结论。
+
+系统 DNS 列表可能包含未启用网卡、split-DNS、scoped resolver 或本地 stub。DNS server 走不同接口只作为辅助证据，不单独证明泄露。浏览器 DoH/DoT 和应用内置 resolver 仍可能走不同路径。
 
 当你怀疑“本地 DNS 缓存/解析不对，但代理侧 DNS 可以访问”时，用 `proxy-test` 对比本地解析和代理域名请求：
 

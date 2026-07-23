@@ -124,6 +124,26 @@ pub enum Commands {
         servers: Vec<String>,
     },
 
+    /// 检测 DNS 是否泄露（DNS 查询是否绕过 VPN/TUN/代理）
+    #[command(alias = "dl")]
+    DnsLeak {
+        /// 指定代理（如 http://127.0.0.1:7897 或 socks5h://127.0.0.1:1080）
+        #[arg(long)]
+        proxy: Option<String>,
+        /// 强制直连，忽略系统代理
+        #[arg(long)]
+        no_proxy: bool,
+        /// 跳过外部探测（仅做本地路由分析）
+        #[arg(long)]
+        no_external: bool,
+        /// 请求/查询超时秒数（默认 5）
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+        /// 每个外部 DNS 提供商的探测次数（默认 3，范围 1-10）
+        #[arg(long, default_value_t = 3, value_parser = parse_dns_leak_count)]
+        count: usize,
+    },
+
     /// 路由追踪（TTL 递增）
     #[command(alias = "t")]
     Trace {
@@ -329,6 +349,16 @@ fn parse_positive_usize(value: &str) -> Result<usize, String> {
         1..=10_000 => Ok(value),
         0 => Err("must be at least 1".to_string()),
         _ => Err("must not exceed 10000".to_string()),
+    }
+}
+
+fn parse_dns_leak_count(value: &str) -> Result<usize, String> {
+    let value = value
+        .parse::<usize>()
+        .map_err(|_| "must be an integer from 1 to 10".to_string())?;
+    match value {
+        1..=10 => Ok(value),
+        _ => Err("must be from 1 to 10".to_string()),
     }
 }
 

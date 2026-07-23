@@ -21,6 +21,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
+| `dns-leak` | Detect DNS leaks (whether DNS queries bypass VPN/TUN/proxy) | `netutils dns-leak` |
 | `proxy-test` | Check proxy reachability, DNS behavior, and request stability | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS handshake and certificate diagnostics | `netutils tls google.com --sni google.com` |
 | `trace` | Traceroute | `netutils trace google.com` |
@@ -152,6 +153,28 @@ When you need to see which DNS servers the system will query and which local gat
 netutils dns-path google.com
 netutils dns-path google.com --server 8.8.8.8
 ```
+
+When you need to check whether DNS resolution escapes a VPN, TUN interface, or proxy path:
+
+```bash
+# Use the current system network and system proxy settings
+netutils dns-leak
+
+# Observe resolver behavior through an explicit remote-DNS proxy
+netutils dns-leak --proxy socks5h://127.0.0.1:1080
+
+# Run five samples per DNS probe provider (default: 3, range: 1-10)
+netutils dns-leak --proxy socks5h://127.0.0.1:1080 --count 5
+
+# Perform only local DNS server and route analysis
+netutils dns-leak --no-external
+```
+
+`dns-leak` runs two resolver probes concurrently. Surfshark queries random `*.ipv4.surfsharkdns.com` hostnames and reports resolver IP, ISP, country, city, and its provider-defined `Leak` flag. The `ip-api-edns` probe starts at `https://edns.ip-api.com/json`, follows the service-generated random-host redirect, and reports resolver IP, country, and organization. `--count 1..10` controls the number of samples run by each provider, so the default value of 3 produces three Surfshark samples and three ip-api-edns samples. The command also queries the `whoami.akamai.net` A record as a secondary resolver observation and uses Cloudflare trace only for the HTTP egress IP. Resolver IPs and HTTP egress IPs are reported separately; they are not expected to be identical. Explicit and system proxies are honored for the HTTP probes, so HTTP and `socks5h` proxies can reveal proxy-side DNS behavior. Use `--no-proxy` to force direct requests.
+
+For HTTP and `socks5h` remote-DNS proxies, resolver observations from Surfshark and ip-api-edns are evaluated together. Multiple resolver IPs are considered a normal resolver pool when all samples are successful and their countries agree; differing known Surfshark cities within the same country are also treated as a leak signal. Resolver IPs spanning different countries or known cities are classified as a DNS leak. Missing country data or a partial sample failure produces an inconclusive `low` result. Surfshark's `Leak` field remains visible but does not by itself override the geographic consistency result for a remote-DNS proxy.
+
+Local DNS server lists can include inactive adapters, split-DNS entries, scoped resolvers, and loopback stubs. A different local interface is therefore treated as supporting evidence rather than proof by itself. Browser DoH/DoT and application-specific resolvers may still use a different path.
 
 When you suspect local DNS cache or local resolution is stale while proxy-side DNS may still work, use `proxy-test`:
 

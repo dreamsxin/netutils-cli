@@ -2,6 +2,23 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.3.22] - 2026-07-23
+
+### 新增
+- 新增 `dns-leak`（别名 `dl`）命令，检测 DNS 查询是否泄露（是否绕过 VPN/TUN/代理）
+  - 本地路由分析：对比每个系统 DNS 服务器的路由接口与流量出口接口是否一致
+  - 外部探测（默认开启，`--no-external` 可关闭）：查询随机 `*.ipv4.surfsharkdns.com` 域名获取实际 resolver IP、ISP、地区和供应商 `Leak` 标记
+  - 默认并发执行 3 个随机 Surfshark DNS 样本，支持通过 `--count 1..10` 调整探测次数并聚合 resolver 结果
+  - 新增 `ip-api-edns` 探针：从固定入口跟随服务端随机域名跳转，获取 resolver IP、国家和组织；每个提供商均执行 `--count` 个样本
+  - 使用 `whoami.akamai.net` A 记录辅助观察 resolver，使用 `https://1.1.1.1/cdn-cgi/trace` 独立获取 HTTP 出口公网 IP
+  - resolver IP 与 HTTP 出口 IP 分开建模，不再因两者不相等直接判定泄露
+  - 外部 HTTP 探针按目标读取显式/系统代理，支持通过 HTTP、SOCKS5H 代理观察代理侧 DNS 行为
+  - 合并 Surfshark 与 ip-api-edns 的 resolver 地理结果；远程 DNS 代理跨国家或跨已知城市时判定为 DNS 泄露，样本不完整则标记为证据不足
+  - 远程 DNS 模式下 Surfshark 的供应商 `Leak` 标记仅展示，不覆盖 resolver 地理一致性结论
+  - 本地环境采集和 DNS 路由查询改为可中断、并发执行，`--total-timeout` 能及时终止命令
+  - 支持 `--proxy`/`--no-proxy`/`--timeout` 参数，输出风险等级（none/low/medium/high）和综合结论
+- `diag` 一键诊断新增 DNS 泄露快检项（仅本地路由分析，无外部依赖）
+
 ## [0.3.18] - 2026-07-08
 
 ### 变更

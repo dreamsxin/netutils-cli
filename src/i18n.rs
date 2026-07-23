@@ -439,6 +439,28 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("diag.direct", "直连", "direct"),
         ("diag.ipv6_ok", "IPv6 可用", "IPv6 available"),
         ("diag.ipv6_fail", "IPv6 不可用", "IPv6 unavailable"),
+        // ── diag: DNS leak ──
+        ("diag.check_dns_leak", "DNS 泄露", "DNS Leak"),
+        (
+            "diag.dns_leak_none",
+            "未发现本地 DNS 路由分流；运行 dns-leak 可做外部 resolver 确认",
+            "No local DNS route diversion found; run dns-leak for external resolver confirmation",
+        ),
+        (
+            "diag.dns_leak_high",
+            "TUN 模式下 {0} 个 DNS server 走不同接口，需要运行 dns-leak 外部探测确认",
+            "{0} DNS server(s) use a different interface under TUN mode; run dns-leak for external confirmation",
+        ),
+        (
+            "diag.dns_leak_medium",
+            "{0} 个 DNS server 配置在不同接口（仅为候选信号）",
+            "{0} DNS server(s) use a different interface (candidate signal only)",
+        ),
+        (
+            "diag.dns_leak_unknown",
+            "DNS server 或路由信息不足，无法判断",
+            "DNS server or route information is incomplete",
+        ),
         // ── diagnose (全链路诊断) ──
         (
             "diagnose.title",

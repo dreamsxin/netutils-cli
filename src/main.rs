@@ -6,6 +6,7 @@ mod diagnose;
 mod dns;
 mod dns_cache;
 mod dns_compare;
+mod dns_leak;
 mod dns_path;
 mod http_client;
 mod i18n;
@@ -96,6 +97,13 @@ async fn main() -> anyhow::Result<()> {
             Some(Commands::DnsCompare { domain, servers }) => {
                 dns_compare::run(&domain, servers, mode).await
             }
+            Some(Commands::DnsLeak {
+                proxy,
+                no_proxy,
+                no_external,
+                timeout,
+                count,
+            }) => dns_leak::run(proxy, no_proxy, no_external, timeout, count, mode).await,
             Some(Commands::Trace { host, max_hops }) => {
                 traceroute::run(&host, max_hops, mode).await
             }
