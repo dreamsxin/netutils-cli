@@ -270,15 +270,11 @@ fn parse_lsof_name(name: &str) -> Option<(String, String, String, String)> {
     let mut rest = name.trim();
 
     // 协议前缀
-    let protocol = if let Some(stripped) = rest.strip_prefix("TCP") {
-        rest = stripped.trim_start();
-        "TCP"
-    } else if let Some(stripped) = rest.strip_prefix("UDP") {
-        rest = stripped.trim_start();
-        "UDP"
-    } else {
-        return None;
+    let (protocol, stripped) = match rest.strip_prefix("TCP") {
+        Some(stripped) => ("TCP", stripped),
+        None => ("UDP", rest.strip_prefix("UDP")?),
     };
+    rest = stripped.trim_start();
 
     // 拆出末尾的 (STATE)
     let (addr_part, state) = if let Some(idx) = rest.rfind(" (") {
