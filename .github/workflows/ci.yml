@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # 阻塞门：使用 rust-toolchain.toml 固定的版本，保证结果可复现。
   test:
     strategy:
       fail-fast: false
@@ -13,9 +14,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # rustup 读取 rust-toolchain.toml 自动安装固定版本及其 components
+      - run: rustup show active-toolchain
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+
+  # 前瞻检查：跟随最新 stable，提前暴露新版 clippy 的 lint。
+  # 不阻塞合并——工具链升级不应该让无改动的分支变红。
+  latest-stable:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # 必须显式 `+stable` 覆盖 rust-toolchain.toml 的固定版本
+      - run: cargo +stable fmt --check
+      - run: cargo +stable clippy --all-targets -- -D warnings
+      - run: cargo +stable test

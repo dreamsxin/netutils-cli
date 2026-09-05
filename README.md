@@ -17,7 +17,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `route-get` | Show the actual route selected for a target and whether it uses TUN/VPN | `netutils route-get google.com` |
 | `proxy` | Proxy settings | `netutils proxy` |
 | `ping` | Ping host (ICMP/TCP) | `netutils ping google.com --count 4` |
-| `dns` | DNS query (UDP/53 or DoH) | `netutils dns example.com --type mx` |
+| `dns` | DNS query (UDP/53, DoH, or DoT) | `netutils dns example.com --type mx` |
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
@@ -171,7 +171,16 @@ netutils dns-leak --proxy socks5h://127.0.0.1:1080 --count 5
 
 # Perform only local DNS server and route analysis
 netutils dns-leak --no-external
+
+# Also measure where an application using encrypted DNS would egress
+netutils dns-leak --doh cloudflare
+netutils dns-leak --doh cloudflare --dot quad9
 ```
+
+`--doh` and `--dot` add an **Encrypted DNS** section. It resolves `whoami.akamai.net` over the chosen transport — that domain's A record returns the IP of the resolver that performed the lookup — and compares it with the resolver observed on the system path. `differs_from_system` answers the question the rest of the command cannot: if a browser or application uses encrypted DNS, does its resolution leave from somewhere else? Partial overlap counts as "not different", and missing data on either side reports `null` rather than guessing.
+
+This section deliberately does **not** affect `risk_level`. The risk rating covers the system resolver path only; encrypted DNS is a separate path, and folding it into the same verdict would make the conclusion ambiguous. DoT reports `proxy_mode` as `direct-not-proxyable` instead of pretending a proxy was applied.
+
 
 `dns-leak` runs two resolver probes concurrently. Surfshark queries random `*.ipv4.surfsharkdns.com` hostnames and reports resolver IP, ISP, country, city, and its provider-defined `Leak` flag. The `ip-api-edns` probe starts at `https://edns.ip-api.com/json`, follows the service-generated random-host redirect, and reports resolver IP, country, and organization. `--count 1..10` controls the number of samples run by each provider, so the default value of 3 produces three Surfshark samples and three ip-api-edns samples. The command also queries the `whoami.akamai.net` A record as a secondary resolver observation and uses Cloudflare trace only for the HTTP egress IP. Resolver IPs and HTTP egress IPs are reported separately; they are not expected to be identical. Explicit and system proxies are honored for the HTTP probes, so HTTP and `socks5h` proxies can reveal proxy-side DNS behavior. Use `--no-proxy` to force direct requests.
 
@@ -203,6 +212,23 @@ The client is built on the same HTTP stack as the other commands, so `--proxy`, 
 `--doh` and `--server` are mutually exclusive because they use different transports — HTTPS versus UDP/53 — and reporting both at once would make the result impossible to attribute. Plaintext `http://` endpoints are refused rather than silently accepted, since DoH over cleartext provides no privacy at all.
 
 Because DoH bypasses the operating-system resolver, the hosts file, VPN split-DNS rules, and the system DNS cache do not apply. Compare the DoH answer with `netutils dns` and `netutils dns-compare` to see whether the two paths disagree.
+
+### DNS Over TLS
+
+`dns --dot` queries over DoT (RFC 7858) on port 853, using the same preset names:
+
+```bash
+netutils dns example.com --dot cloudflare
+netutils dns example.com --dot dns.example.net
+netutils dns example.com --dot dns.example.net:8853
+```
+
+The report includes the negotiated TLS version, which confirms the query was actually encrypted, and the server IP that was connected to.
+
+A hostname is required. DoT validates the server certificate, and an IP alone cannot be validated, so `--dot 1.1.1.1` is rejected rather than accepted with a meaningless "encrypted" result — use the preset or the resolver's hostname.
+
+DoT does not support proxies: it is a raw TLS stream on port 853, not HTTP, and traversing a proxy would require CONNECT tunneling that the built-in HTTP client does not provide. `--proxy` and `--no-proxy` therefore fail with a usage error when combined with `--dot`; use `--doh` when you need to observe proxy-side DNS behavior.
+
 
 
 When you suspect local DNS cache or local resolution is stale while proxy-side DNS may still work, use `proxy-test`:
@@ -453,6 +479,7 @@ netutils/
     ├── ping/mod.rs          # Ping (ICMP/TCP)
     ├── dns/mod.rs           # DNS query
     ├── doh.rs               # DNS over HTTPS client (RFC 8484)
+    ├── dot.rs               # DNS over TLS client (RFC 7858)
     ├── dns_cache.rs         # DNS cache inspection
     ├── dns_path.rs          # DNS server path inspection
     ├── dns_compare.rs       # DNS result comparison

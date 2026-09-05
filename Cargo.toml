@@ -7,6 +7,9 @@ license = "MIT"
 repository = "https://github.com/dreamsxin/netutils-cli"
 keywords = ["network", "cli", "ping", "dns", "traceroute"]
 categories = ["command-line-utilities", "network-programming"]
+# 固定工具链只约束本仓库的开发与 CI，不应随 crate 发布出去强迫
+# 用户下载特定版本的 rustc。
+exclude = ["rust-toolchain.toml", ".github/"]
 
 [[bin]]
 name = "netutils"

@@ -1,0 +1,9 @@
+# 阻塞门必须可复现：CI 与本地使用同一个固定版本，
+# 否则新版 stable 引入一条 lint 就能让没有任何改动的分支变红
+# （0.5.0 开发期间 clippy::result_large_err 就这样打断过一次 CI）。
+#
+# 新版 stable 的前瞻检查由 CI 里独立的 latest-stable 任务承担，
+# 该任务不阻塞合并，只负责提前暴露问题。升级时同步改这里和 CHANGELOG。
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

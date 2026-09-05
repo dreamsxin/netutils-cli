@@ -97,6 +97,9 @@ pub enum Commands {
         /// 通过 DoH 查询：预设名（cloudflare/google/quad9/adguard/alidns/dnspod）或 https:// URL
         #[arg(long, value_name = "PRESET|URL", conflicts_with = "server")]
         doh: Option<String>,
+        /// 通过 DoT 查询（853 端口）：预设名或 host[:port]；DoT 是裸 TLS，不支持代理
+        #[arg(long, value_name = "PRESET|HOST", conflicts_with_all = ["server", "doh"])]
+        dot: Option<String>,
         /// DoH 请求使用的代理（如 socks5h://127.0.0.1:1080）
         #[arg(long, requires = "doh")]
         proxy: Option<String>,
@@ -156,6 +159,12 @@ pub enum Commands {
         /// 每个外部 DNS 提供商的探测次数（默认 3，范围 1-10）
         #[arg(long, default_value_t = 3, value_parser = parse_dns_leak_count)]
         count: usize,
+        /// 额外通过 DoH 观察加密路径的 resolver：预设名或 https:// URL
+        #[arg(long, value_name = "PRESET|URL")]
+        doh: Option<String>,
+        /// 额外通过 DoT 观察加密路径的 resolver：预设名或 host[:port]
+        #[arg(long, value_name = "PRESET|HOST")]
+        dot: Option<String>,
     },
 
     /// 路由追踪（TTL 递增）

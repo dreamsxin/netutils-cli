@@ -240,3 +240,79 @@ fn plaintext_doh_endpoint_is_refused() {
         stdout(&output)
     );
 }
+
+#[test]
+fn dns_help_documents_dot() {
+    let output = netutils(&["dns", "--help"]);
+
+    assert!(output.status.success());
+    assert!(
+        stdout(&output).contains("--dot"),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn dot_conflicts_with_the_other_transports() {
+    for conflicting in [["--server", "8.8.8.8"], ["--doh", "cloudflare"]] {
+        let output = netutils(&[
+            "dns",
+            "example.com",
+            "--dot",
+            "cloudflare",
+            conflicting[0],
+            conflicting[1],
+        ]);
+
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "--dot must conflict with {}",
+            conflicting[0]
+        );
+    }
+}
+
+#[test]
+fn dot_rejects_bare_ip_before_connecting() {
+    // DoT 校验服务器证书，只给 IP 无法验证身份，这在离线环境下也能稳定复现。
+    let output = netutils(&["--json", "dns", "example.com", "--dot", "1.1.1.1"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert!(text.contains("requires a hostname"), "stdout: {text}");
+}
+
+#[test]
+fn dot_rejects_url_form() {
+    let output = netutils(&[
+        "--json",
+        "dns",
+        "example.com",
+        "--dot",
+        "tls://dns.example.net",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout(&output).contains("expected host or host:port"),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn dot_proxy_flags_are_not_accepted() {
+    // 代理只对 DoH 有意义，--proxy 依赖 --doh，因此配 --dot 属于用法错误。
+    let output = netutils(&[
+        "dns",
+        "example.com",
+        "--dot",
+        "cloudflare",
+        "--proxy",
+        "http://127.0.0.1:1",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+}

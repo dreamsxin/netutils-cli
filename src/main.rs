@@ -11,6 +11,7 @@ mod dns_compare;
 mod dns_leak;
 mod dns_path;
 mod doh;
+mod dot;
 mod http_client;
 mod i18n;
 mod icmp;
@@ -94,9 +95,10 @@ async fn main() -> anyhow::Result<()> {
                 r#type,
                 server,
                 doh,
+                dot,
                 proxy,
                 no_proxy,
-            }) => dns::run(&domain, r#type, server, doh, proxy, no_proxy, mode).await,
+            }) => dns::run(&domain, r#type, server, doh, dot, proxy, no_proxy, mode).await,
             Some(Commands::DnsCache {
                 domain,
                 flush,
@@ -112,7 +114,9 @@ async fn main() -> anyhow::Result<()> {
                 no_external,
                 timeout,
                 count,
-            }) => dns_leak::run(proxy, no_proxy, no_external, timeout, count, mode).await,
+                doh,
+                dot,
+            }) => dns_leak::run(proxy, no_proxy, no_external, timeout, count, doh, dot, mode).await,
             Some(Commands::Trace { host, max_hops }) => {
                 traceroute::run(&host, max_hops, mode).await
             }
@@ -277,13 +281,27 @@ async fn main() -> anyhow::Result<()> {
                 .await
             }
             Some(Commands::Completions { shell }) => {
-                let mut command = Cli::command();
-                clap_complete::generate(shell, &mut command, "netutils", &mut io::stdout());
+                let generated = on_large_stack(move || {
+                    let mut command = Cli::command();
+                    clap_complete::generate(shell, &mut command, "netutils", &mut io::stdout());
+                });
+                if let Err(err) = generated {
+                    output::mark_failure();
+                    eprintln!("failed to generate completions: {err}");
+                }
             }
             Some(Commands::Man) => {
-                if let Err(err) = clap_mangen::Man::new(Cli::command()).render(&mut io::stdout()) {
-                    output::mark_failure();
-                    eprintln!("failed to render man page: {err}");
+                let rendered = on_large_stack(|| {
+                    clap_mangen::Man::new(Cli::command())
+                        .render(&mut io::stdout())
+                        .map_err(|err| format!("failed to render man page: {err}"))
+                });
+                match rendered {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) | Err(err) => {
+                        output::mark_failure();
+                        eprintln!("{err}");
+                    }
                 }
             }
         }
@@ -310,6 +328,26 @@ fn output_mode(json: bool) -> OutputMode {
     } else {
         OutputMode::Table
     }
+}
+
+/// clap 命令树的递归遍历需要的栈空间。
+///
+/// `clap_complete`/`clap_mangen` 会深度遍历整棵命令树，在 Windows 默认的
+/// 1MB 主线程栈上会溢出——0.3.17 曾因同样原因把 `plugin` 拆成独立解析器。
+/// 与其每次新增参数都担心踩线，不如把生成动作放到显式给足栈空间的线程上。
+const GENERATOR_STACK_SIZE: usize = 16 * 1024 * 1024;
+
+fn on_large_stack<F, T>(task: F) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::Builder::new()
+        .stack_size(GENERATOR_STACK_SIZE)
+        .spawn(task)
+        .map_err(|err| format!("failed to spawn generator thread: {err}"))?
+        .join()
+        .map_err(|_| "generator thread panicked".to_string())
 }
 
 /// 解析 `--assert` 表达式。语法错误属于 CLI 用法错误，直接以退出码 2 结束。
