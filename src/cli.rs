@@ -4,6 +4,7 @@ use std::ffi::OsString;
 
 use clap::{Parser, Subcommand};
 
+use crate::color::ColorChoice;
 use crate::dns::DnsRecordType;
 use crate::i18n::Lang;
 
@@ -18,6 +19,10 @@ pub struct Cli {
     /// 覆盖语言（zh/en），默认自动检测
     #[arg(long, global = true, value_enum)]
     pub lang: Option<Lang>,
+
+    /// 颜色输出（auto/always/never）；亦遵循 NO_COLOR 环境变量
+    #[arg(long, global = true, value_enum, value_name = "WHEN")]
+    pub color: Option<ColorChoice>,
 
     /// 整条命令的总超时秒数；不指定时仅使用各步骤自身超时
     #[arg(long, global = true)]
@@ -86,9 +91,18 @@ pub enum Commands {
         /// 记录类型（默认 A）
         #[arg(short, long, value_enum, default_value_t = DnsRecordType::A)]
         r#type: DnsRecordType,
-        /// 指定 DNS 服务器（如 8.8.8.8）
+        /// 指定 DNS 服务器（如 8.8.8.8），走 UDP/53
         #[arg(long)]
         server: Option<String>,
+        /// 通过 DoH 查询：预设名（cloudflare/google/quad9/adguard/alidns/dnspod）或 https:// URL
+        #[arg(long, value_name = "PRESET|URL", conflicts_with = "server")]
+        doh: Option<String>,
+        /// DoH 请求使用的代理（如 socks5h://127.0.0.1:1080）
+        #[arg(long, requires = "doh")]
+        proxy: Option<String>,
+        /// DoH 请求强制直连，忽略系统代理
+        #[arg(long, requires = "doh")]
+        no_proxy: bool,
     },
 
     /// 检查系统 DNS 缓存，排查代理/TUN 切换后的陈旧解析
@@ -189,6 +203,9 @@ pub enum Commands {
         /// 并发数（默认 1，串行）
         #[arg(long, default_value_t = 1)]
         concurrency: usize,
+        /// CI 断言，可重复传入，如 --assert success_rate=100% --assert latency<500ms
+        #[arg(long = "assert", value_name = "EXPR")]
+        assertions: Vec<String>,
     },
 
     /// 发起一次 HTTP 请求并显示响应结果
@@ -220,6 +237,9 @@ pub enum Commands {
         /// 最多显示多少字节响应体（默认 2048，0 表示不显示）
         #[arg(long, default_value_t = 2048)]
         body_limit: usize,
+        /// CI 断言，可重复传入，如 --assert status=200 --assert latency<500ms
+        #[arg(long = "assert", value_name = "EXPR")]
+        assertions: Vec<String>,
     },
 
     /// 安装官方或本地插件
@@ -325,6 +345,32 @@ pub enum Commands {
         alpn: String,
     },
 
+    /// 路径 MTU 发现与 PMTUD 黑洞检测（排查 VPN/隧道下大包静默丢失）
+    #[command(alias = "m")]
+    Mtu {
+        /// 目标主机名或 IP
+        target: String,
+        /// 搜索下界（默认 IPv4 576 / IPv6 1280）
+        #[arg(long)]
+        min_mtu: Option<u32>,
+        /// 搜索上界（默认出口接口 MTU，探测不到时用 1500）
+        #[arg(long)]
+        max_mtu: Option<u32>,
+        /// 单次探测超时秒数（默认 2）
+        #[arg(long, default_value_t = 2)]
+        timeout: u64,
+    },
+
+    /// 生成 shell 补全脚本，如 netutils completions bash > netutils.bash
+    Completions {
+        /// 目标 shell
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
+    /// 生成 man page（roff 格式）输出到 stdout
+    Man,
+
     /// 外部插件命令，例如 netutils mcp ...
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -362,6 +408,44 @@ fn parse_dns_leak_count(value: &str) -> Result<usize, String> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // clap 的内建校验：重复的长/短选项、冲突的别名等都会在这里 panic。
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn plugin_cli_definition_is_valid() {
+        PluginCli::command().debug_assert();
+    }
+
+    #[test]
+    fn dns_leak_count_is_bounded() {
+        assert!(parse_dns_leak_count("0").is_err());
+        assert!(parse_dns_leak_count("11").is_err());
+        assert_eq!(parse_dns_leak_count("3"), Ok(3));
+    }
+
+    #[test]
+    fn proxy_test_count_is_bounded() {
+        assert!(parse_positive_u32("0").is_err());
+        assert!(parse_positive_u32("100001").is_err());
+        assert_eq!(parse_positive_u32("20"), Ok(20));
+    }
+
+    #[test]
+    fn concurrency_is_bounded() {
+        assert!(parse_positive_usize("0").is_err());
+        assert!(parse_positive_usize("10001").is_err());
+        assert_eq!(parse_positive_usize("5"), Ok(5));
+    }
+}
+
 /// 插件管理
 #[derive(Parser, Debug)]
 #[command(
@@ -378,6 +462,10 @@ pub struct PluginCli {
     /// 覆盖语言（zh/en），默认自动检测
     #[arg(long, global = true, value_enum)]
     pub lang: Option<Lang>,
+
+    /// 颜色输出（auto/always/never）；亦遵循 NO_COLOR 环境变量
+    #[arg(long, global = true, value_enum, value_name = "WHEN")]
+    pub color: Option<ColorChoice>,
 
     /// 整条命令的总超时秒数（插件管理命令暂不使用）
     #[arg(long, global = true)]

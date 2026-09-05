@@ -711,7 +711,7 @@ async fn run_plugin_binary(
         )
         .env("NETUTILS_CORE_VERSION", env!("CARGO_PKG_VERSION"))
         .env("NETUTILS_PLUGIN_NAME", command_name)
-        .env("NETUTILS_COLOR", "auto");
+        .env("NETUTILS_COLOR", crate::color::effective().as_env_value());
     if let Some(target) = plugin_target_arg(rest) {
         if let Some(proxy) = crate::util::get_system_proxy_for_url(&target) {
             child.env("NETUTILS_EFFECTIVE_PROXY", proxy);

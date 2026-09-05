@@ -7,6 +7,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Method, Url};
 use serde::Serialize;
 
+use crate::assertion::{self, Assertion, AssertionReport, Metrics};
 use crate::output::{print_json, OutputMode};
 use crate::table::print_table;
 
@@ -20,6 +21,9 @@ pub struct HttpReport {
     pub request_body_bytes: usize,
     pub response: HttpResponse,
     pub timings: HttpTimings,
+    /// `--assert` 判定结果；未传断言时不出现在 JSON 中
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assertions: Option<AssertionReport>,
     pub notes: Vec<String>,
 }
 
@@ -63,6 +67,7 @@ pub async fn run(
     no_proxy: bool,
     show_headers: bool,
     body_limit: usize,
+    assertions: &[Assertion],
     mode: OutputMode,
 ) {
     let url = normalize_url(input_url);
@@ -71,6 +76,7 @@ pub async fn run(
         Err(err) => {
             output(
                 error_report(input_url, &url, method, format!("invalid method: {err}")),
+                assertions,
                 mode,
             );
             return;
@@ -84,6 +90,7 @@ pub async fn run(
                 method.as_str(),
                 format!("invalid URL: {err}"),
             ),
+            assertions,
             mode,
         );
         return;
@@ -92,7 +99,11 @@ pub async fn run(
     let headers = match parse_headers(&raw_headers) {
         Ok(headers) => headers,
         Err(err) => {
-            output(error_report(input_url, &url, method.as_str(), err), mode);
+            output(
+                error_report(input_url, &url, method.as_str(), err),
+                assertions,
+                mode,
+            );
             return;
         }
     };
@@ -131,6 +142,7 @@ pub async fn run(
                     failed_response(format!("failed to build client: {err}")),
                     0.0,
                 ),
+                assertions,
                 mode,
             );
             return;
@@ -157,6 +169,7 @@ pub async fn run(
                     failed_response(err.to_string()),
                     start.elapsed().as_secs_f64() * 1000.0,
                 ),
+                assertions,
                 mode,
             );
             return;
@@ -186,6 +199,7 @@ pub async fn run(
             },
             start.elapsed().as_secs_f64() * 1000.0,
         ),
+        assertions,
         mode,
     );
 }
@@ -338,6 +352,7 @@ fn report_with_response(
         request_body_bytes,
         response,
         timings: HttpTimings { total_ms },
+        assertions: None,
         notes: vec![
             "Use --show-headers to include response headers.".to_string(),
             "Use --body-limit 0 to skip response body preview.".to_string(),
@@ -345,14 +360,50 @@ fn report_with_response(
     }
 }
 
-fn output(report: HttpReport, mode: OutputMode) {
+/// 把报告映射成断言可用的指标集合。
+///
+/// 支持但本次取不到的指标显式声明为 unavailable，避免与「指标名写错」混淆。
+fn metrics(report: &HttpReport) -> Metrics {
+    let mut metrics = Metrics::new();
+    metrics
+        .num("latency_ms", report.timings.total_ms)
+        .num("body_bytes", report.response.body_bytes as f64)
+        .num("ok", if report.response.ok { 1.0 } else { 0.0 });
+    match report.response.status {
+        Some(status) => metrics.num("status", f64::from(status)),
+        None => metrics.unavailable("status", "no HTTP response was received"),
+    };
+    match &report.response.final_url {
+        Some(final_url) => metrics.text("final_url", final_url.clone()),
+        None => metrics.unavailable("final_url", "no HTTP response was received"),
+    };
+    match &report.response.body_preview {
+        Some(body) => metrics.text("body", body.clone()),
+        None => metrics.unavailable("body", "body preview is disabled or empty"),
+    };
+    match &report.response.error {
+        Some(error) => metrics.text("error", error.clone()),
+        None => metrics.text("error", ""),
+    };
+    metrics
+}
+
+fn output(mut report: HttpReport, assertions: &[Assertion], mode: OutputMode) {
     if !report.response.ok {
         crate::output::mark_failure();
+    }
+    if !assertions.is_empty() {
+        let evaluated = assertion::evaluate(assertions, &metrics(&report));
+        assertion::mark_exit_code(&evaluated);
+        report.assertions = Some(evaluated);
     }
     if mode == OutputMode::Json {
         print_json(&report);
     } else {
         print_report(&report);
+        if let Some(evaluated) = &report.assertions {
+            assertion::print_report(evaluated);
+        }
     }
 }
 

@@ -2,6 +2,56 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.5.0] - 2026-09-05
+
+### 新增
+- `dns` 支持 DoH（DNS over HTTPS，RFC 8484），补上此前代码里自己标注的盲区
+  - `--doh <PRESET|URL>`：预设 `cloudflare`/`google`/`quad9`/`adguard`/`alidns`/`dnspod`，或直接传 https URL
+  - 基于 `reqwest` 而非 trust-dns 内建 DoH 实现，因此 DoH 查询能复用本项目的代理选择；
+    这是排查「代理侧 DNS 行为」的前提，trust-dns 内建 DoH 无法接入这里的代理配置
+  - `--proxy` / `--no-proxy` 控制 DoH 请求的代理，未选定代理时显式禁用环境代理
+  - 拒绝 `http://` 明文 endpoint：明文 DoH 没有隐私意义，静默接受只会给出虚假的安全感
+  - `--doh` 与 `--server` 互斥：两者分别走 HTTPS 和 UDP/53，同时给出会让结果无法归因
+  - 报文 ID 固定为 0，遵循 RFC 8484 关于 HTTP 缓存的建议
+  - 输出 DNS 响应码、实际 endpoint、代理模式，并提示 DoH 完全绕过系统 resolver
+  - JSON 输出带 `transport: "doh"` 字段，便于脚本区分链路
+
+### 变更
+- DoH 请求失败时展开错误的 source 链。`reqwest::Error` 的 Display 只给出
+  「error sending request for url ...」，真正的原因（连接被拒、TLS 失败、超时）都在 source 里，
+  对诊断工具而言等于没说
+
+## [0.4.0] - 2026-09-05
+
+### 新增
+- 新增 `mtu`（别名 `m`）命令：路径 MTU 发现与 PMTUD 黑洞检测
+  - 借助系统 `ping` 的 DF（Don't Fragment）能力二分查找路径 MTU，无需提权和原始套接字
+  - 区分「明确收到 ICMP fragmentation-needed」与「大包被静默丢弃」，后者判定为 PMTUD 黑洞
+  - 解析路径设备通告的 MTU 并优先验证该值，减少探测轮次
+  - 对比出口接口本地 MTU，直接给出隧道开销字节数
+  - 支持 `--min-mtu`、`--max-mtu`、`--timeout` 和 `--json`
+- `http` 与 `check` 新增 `--assert <EXPR>` CI 断言，可重复传入
+  - 运算符：`=`/`==`、`!=`、`<`、`<=`、`>`、`>=`、`*=`（包含子串）
+  - 数值支持 `ms`、`s`、`%` 单位，时延指标省略单位时按毫秒解释
+  - 指标别名：`latency`→`latency_ms`、`p95`→`p95_ms`、`code`→`status` 等
+  - `http` 指标：`status`、`latency_ms`、`body`、`body_bytes`、`final_url`、`error`、`ok`
+  - `check` 指标：`success_rate`、`latency_ms`、`min_ms`、`max_ms`、`status`、`total`、`success`、`failed`
+  - 断言失败使用独立退出码 `3`，与「探测失败」(`1`) 和「用法错误」(`2`) 区分
+  - 区分「指标名写错」与「本次运行取不到该指标」，后者附带具体原因
+- 新增全局 `--color auto|always|never`，并遵循 `NO_COLOR`、`CLICOLOR_FORCE`、`CLICOLOR` 环境变量
+  - JSON 输出模式强制关闭颜色，避免 ANSI 转义破坏解析
+  - 未指定时按 stdout 是否为终端自动判断，重定向到文件不再写入转义序列
+  - 解析结果通过 `NETUTILS_COLOR` 传递给插件子进程，核心与插件行为一致
+- 新增 `completions <shell>` 生成 bash/zsh/fish/powershell/elvish 补全脚本
+- 新增 `man` 生成 roff 格式 man page
+
+### 变更
+- 全局开关解析表化，`plugin` 子命令前的 `--color` 等开关不再被误判为子命令
+
+### 测试
+- 新增 `tests/cli.rs` 集成测试：覆盖帮助、版本、补全、man、颜色开关、断言语法错误和退出码约定，全部离线运行
+- 新增 `Cli::command().debug_assert()` 校验，CLI 定义冲突在测试阶段即暴露
+
 ## [0.3.22] - 2026-07-23
 
 ### 新增
