@@ -25,6 +25,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `proxy-test` | Check proxy reachability, DNS behavior, and request stability | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS handshake and certificate diagnostics | `netutils tls google.com --sni google.com` |
 | `trace` | Traceroute | `netutils trace google.com` |
+| `mtu` | Path MTU discovery and PMTUD blackhole detection | `netutils mtu google.com` |
 | `scan` | Port scan | `netutils scan 192.168.1.1 80,443` |
 | `check` | Connectivity test | `netutils check https://example.com` |
 | `http` | Send one HTTP request and show the response result | `netutils http https://example.com --show-headers` |
@@ -37,6 +38,8 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
 | `path` | HTTP request path analysis (DNS→proxy/egress→Trace→TCP/TLS/HTTP) | `netutils path https://myip.ipipv.com` |
+| `completions` | Generate a shell completion script | `netutils completions bash > netutils.bash` |
+| `man` | Generate a roff man page on stdout | `netutils man > netutils.1` |
 
 ### Installation
 
@@ -290,14 +293,101 @@ netutils path https://myip.ipipv.com --no-proxy
 
 In proxy mode, `path` traces the local path to the proxy entrypoint and labels proxy-side DNS and downstream hops as hidden. It no longer presents a locally resolved target trace as the actual proxy path.
 
-Command exit codes are `0` for a successful probe, `1` for a completed failure, `2` for CLI usage errors, and `124` when `--total-timeout` expires. Authentication headers, cookies, API keys, tokens, and proxy credentials are redacted from reports by default.
+Command exit codes are `0` for a successful probe, `1` for a completed failure, `2` for CLI usage errors, `3` for a failed `--assert`, and `124` when `--total-timeout` expires. Authentication headers, cookies, API keys, tokens, and proxy credentials are redacted from reports by default.
+
+### Path MTU And PMTUD Blackholes
+
+Small packets working while large transfers stall is the classic tunnel MTU failure: the path MTU dropped below the local interface MTU, and some device on the way discards the ICMP "fragmentation needed" reply, so Path MTU Discovery never converges.
+
+```bash
+# Binary-search the path MTU and classify the failure mode
+netutils mtu google.com
+
+# Narrow the search window when you already know the tunnel MTU
+netutils mtu google.com --min-mtu 1200 --max-mtu 1500
+
+# Machine-readable output for dashboards
+netutils --json mtu google.com
+```
+
+`mtu` drives the system `ping` with the DF (Don't Fragment) bit set, so it needs no elevated privileges and no raw sockets. It probes the search floor first to confirm the target answers DF pings at all, then binary-searches upward. When a router advertises an exact MTU in its ICMP reply, that value is verified directly instead of being searched for.
+
+The verdict distinguishes two very different failures:
+
+- `reduced` — an explicit ICMP fragmentation-needed reply came back, so PMTUD works and the path MTU is simply lower than the local MTU. The report states how many bytes the tunnel consumes.
+- `blackhole` — oversized packets vanish with no ICMP reply at all. PMTUD is broken and large transfers will hang. Lowering the tunnel MTU or enabling TCP MSS clamping is the usual fix.
+- `inconclusive` — the target never answered a DF ping, so ICMP is filtered end to end and this method cannot measure the path.
+
+Proxied traffic is out of scope: the proxy establishes its own path to the target, which the local host cannot probe.
+
+### CI Assertions
+
+`http` and `check` accept repeatable `--assert <EXPR>` conditions so a probe can gate a pipeline directly, without post-processing JSON:
+
+```bash
+# Fail the build unless the endpoint returns 200 within 500ms
+netutils http https://api.example.com/health --assert status=200 --assert latency<500ms
+
+# Require a stable success rate across 50 samples
+netutils check https://api.example.com --count 50 --assert success_rate>=99% --assert latency<800ms
+
+# Assert on the response body
+netutils http https://api.example.com/health --assert 'body*="ok"'
+```
+
+Expressions are `<metric><op><value>`. Operators are `=`/`==`, `!=`, `<`, `<=`, `>`, `>=`, and `*=` for substring containment. Values accept `ms`, `s`, and `%` suffixes; latency metrics without a suffix are read as milliseconds. Metric aliases are accepted, so `latency` resolves to `latency_ms`, `p95` to `p95_ms`, and `code` to `status`.
+
+- `http` metrics: `status`, `latency_ms`, `body`, `body_bytes`, `final_url`, `error`, `ok`
+- `check` metrics: `success_rate`, `latency_ms`, `min_ms`, `max_ms`, `status`, `total`, `success`, `failed`, `check_type`, `target`
+
+A failed assertion exits with `3`, distinct from a failed probe (`1`) and a usage error (`2`), so a pipeline can tell "the service is down" apart from "the service is up but out of budget". A malformed expression is a usage error and exits `2` before any network traffic is sent. When a metric is supported but unavailable for a given run — for example `status` after a connection error, or `latency_ms` when every probe failed — the report says so explicitly instead of claiming the metric name is unknown.
+
+In JSON mode the results are attached to the report under `assertions`:
+
+```bash
+netutils --json http https://api.example.com --assert status=200 | jq '.assertions'
+```
+
+### Color Control
+
+Color is enabled only when it is useful and safe:
+
+```bash
+netutils --color never iface     # force plain text
+netutils --color always iface    # force color even when piped
+NO_COLOR=1 netutils iface        # honored per https://no-color.org
+```
+
+Resolution order is `--color`, then JSON mode (always plain, so ANSI escapes cannot corrupt parsing), then `NO_COLOR`, `CLICOLOR_FORCE`, `NETUTILS_COLOR`, `CLICOLOR`, and finally terminal detection on stdout. Redirecting output to a file therefore produces clean text by default. The resolved choice is passed to plugin subprocesses through `NETUTILS_COLOR` so plugins behave the same as the core.
+
+### Shell Completions And Man Page
+
+```bash
+# bash
+netutils completions bash > /etc/bash_completion.d/netutils
+
+# zsh
+netutils completions zsh > "${fpath[1]}/_netutils"
+
+# fish
+netutils completions fish > ~/.config/fish/completions/netutils.fish
+
+# PowerShell
+netutils completions powershell | Out-String | Invoke-Expression
+
+# man page
+netutils man > /usr/local/share/man/man1/netutils.1
+```
+
 
 ### Key Features
 
 - **i18n**: Auto-detects system language (Chinese/English), `--lang zh|en` to override
 - **JSON output**: `--json` flag for all commands, pipe-friendly
-- **Color highlighting**: Egress in green, errors in red, virtual adapters in yellow
-- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
+- **Color highlighting**: Egress in green, errors in red, virtual adapters in yellow; `--color` and `NO_COLOR` respected, and JSON output is always plain
+- **CI assertions**: `--assert` on `http` and `check` with a dedicated exit code, no JSON post-processing required
+- **Shell integration**: `completions` for bash/zsh/fish/powershell/elvish, plus a generated `man` page
+- **Command aliases**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`m`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
 - **Cross-platform**: Windows (PowerShell), Linux (`ip`/`resolvectl`), macOS (`ifconfig`/`scutil`/`networksetup`)
 - **System proxy aware**: HTTP checks auto-detect system proxy and support `--proxy` and `--no-proxy`
 - **Egress detection**: UDP probe identifies actual traffic egress + explains routing logic
@@ -313,9 +403,13 @@ netutils/
 ├── Cargo.toml
 ├── README.md           # English (default)
 ├── README_ZH.md        # Chinese
+├── tests/
+│   └── cli.rs          # Offline CLI integration tests
 └── src/
     ├── main.rs              # Entry: CLI dispatch
     ├── cli.rs               # Subcommand definitions (clap)
+    ├── assertion.rs         # --assert expression parsing and evaluation
+    ├── color.rs             # Color resolution (--color / NO_COLOR / TTY)
     ├── i18n.rs              # Internationalization
     ├── table.rs             # Table rendering (unicode-width)
     ├── output.rs            # Output mode (Table/JSON)
@@ -340,6 +434,7 @@ netutils/
     ├── route_probe.rs       # Route lookup helper
     ├── route_get.rs         # Route decision analysis
     ├── traceroute/mod.rs    # Traceroute
+    ├── mtu.rs               # Path MTU discovery + PMTUD blackhole detection
     ├── portscan/mod.rs      # Port scan
     ├── connectivity/mod.rs  # Connectivity test
     ├── connections/mod.rs   # Connection listing
@@ -354,6 +449,8 @@ netutils/
 | Crate | Purpose |
 |-------|---------|
 | `clap` | CLI parsing |
+| `clap_complete` | Shell completion generation |
+| `clap_mangen` | Man page generation |
 | `tokio` | Async runtime |
 | `surge-ping` | ICMP ping |
 | `trust-dns-resolver` | DNS queries |

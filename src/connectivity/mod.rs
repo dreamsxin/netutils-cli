@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use colored::*;
 use serde::Serialize;
 
+use crate::assertion::{self, Assertion, AssertionReport, Metrics};
 use crate::i18n::t;
 use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
@@ -37,6 +38,9 @@ pub struct CheckOutput {
     pub check_type: String,
     pub probes: Vec<CheckProbe>,
     pub stats: CheckStats,
+    /// `--assert` 判定结果；未传断言时不出现在 JSON 中
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assertions: Option<AssertionReport>,
 }
 
 #[derive(Serialize, Clone)]
@@ -59,6 +63,7 @@ pub async fn run(
     proxy: Option<String>,
     no_proxy: bool,
     concurrency: usize,
+    assertions: &[Assertion],
     mode: OutputMode,
 ) {
     if target.starts_with("http://") || target.starts_with("https://") {
@@ -70,12 +75,77 @@ pub async fn run(
             proxy,
             no_proxy,
             concurrency,
+            assertions,
             mode,
         )
         .await;
     } else {
-        run_tcp(target, count, timeout, mode).await;
+        run_tcp(target, count, timeout, assertions, mode).await;
     }
+}
+
+/// 把测试结果映射成断言可用的指标集合。
+///
+/// 支持但本次取不到的指标显式声明为 unavailable，避免与「指标名写错」混淆。
+fn check_metrics(output: &CheckOutput) -> Metrics {
+    let mut metrics = Metrics::new();
+    let total = output.stats.total.max(1) as f64;
+    metrics
+        .num("total", output.stats.total as f64)
+        .num("success", output.stats.success as f64)
+        .num("failed", output.stats.failed as f64)
+        .num("success_rate", output.stats.success as f64 / total * 100.0)
+        .text("check_type", output.check_type.clone())
+        .text("target", output.target.clone());
+
+    // 全部探测失败时没有任何时延样本。
+    const NO_SAMPLE: &str = "no probe succeeded, so there is no latency sample";
+    match output.stats.avg_ms {
+        // latency 默认指向平均值，最常用。
+        Some(avg) => metrics.num("latency_ms", avg).num("avg_ms", avg),
+        None => metrics
+            .unavailable("latency_ms", NO_SAMPLE)
+            .unavailable("avg_ms", NO_SAMPLE),
+    };
+    match output.stats.min_ms {
+        Some(min) => metrics.num("min_ms", min),
+        None => metrics.unavailable("min_ms", NO_SAMPLE),
+    };
+    match output.stats.max_ms {
+        Some(max) => metrics.num("max_ms", max),
+        None => metrics.unavailable("max_ms", NO_SAMPLE),
+    };
+    match output
+        .probes
+        .iter()
+        .find_map(|probe| probe.status_code)
+        .map(f64::from)
+    {
+        Some(status) => metrics.num("status", status),
+        None if output.check_type == "tcp" => {
+            metrics.unavailable("status", "TCP checks have no HTTP status code")
+        }
+        None => metrics.unavailable("status", "no HTTP response was received"),
+    };
+    metrics
+}
+
+/// 统一收尾：评估断言、写入退出码、按模式渲染。
+/// 返回 `true` 表示已完成 JSON 输出，调用方应直接结束。
+fn finish(output: &mut CheckOutput, assertions: &[Assertion], mode: OutputMode) -> bool {
+    if output.stats.success == 0 {
+        crate::output::mark_failure();
+    }
+    if !assertions.is_empty() {
+        let evaluated = assertion::evaluate(assertions, &check_metrics(output));
+        assertion::mark_exit_code(&evaluated);
+        output.assertions = Some(evaluated);
+    }
+    if mode == OutputMode::Json {
+        print_json(output);
+        return true;
+    }
+    false
 }
 
 /// 解析 host:port（支持 IPv6 如 [::1]:443）
@@ -120,7 +190,13 @@ fn parse_url(url: &str) -> Option<(String, u16, bool)> {
 }
 
 /// TCP 连通性测试
-async fn run_tcp(target: &str, count: u32, connect_timeout: Duration, mode: OutputMode) {
+async fn run_tcp(
+    target: &str,
+    count: u32,
+    connect_timeout: Duration,
+    assertions: &[Assertion],
+    mode: OutputMode,
+) {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
@@ -211,23 +287,22 @@ async fn run_tcp(target: &str, count: u32, connect_timeout: Duration, mode: Outp
     }
 
     let stats = compute_stats(&probes);
-    let output = CheckOutput {
+    let mut output = CheckOutput {
         target: target.to_string(),
         check_type: "tcp".to_string(),
         probes: probes.clone(),
         stats: stats.clone(),
+        assertions: None,
     };
 
-    if output.stats.success == 0 {
-        crate::output::mark_failure();
-    }
-
-    if mode == OutputMode::Json {
-        print_json(&output);
+    if finish(&mut output, assertions, mode) {
         return;
     }
 
     print_stats(&stats, false);
+    if let Some(evaluated) = &output.assertions {
+        assertion::print_report(evaluated);
+    }
 }
 
 /// HTTP 连通性测试（自动检测并使用系统代理）
@@ -240,6 +315,7 @@ async fn run_http(
     proxy: Option<String>,
     no_proxy: bool,
     concurrency: usize,
+    assertions: &[Assertion],
     mode: OutputMode,
 ) {
     // 确定代理：--proxy 优先 > --no-proxy 强制直连 > 系统自动检测
@@ -369,7 +445,7 @@ async fn run_http(
     }
 
     let stats = compute_stats(&probes);
-    let output = CheckOutput {
+    let mut output = CheckOutput {
         target: url.to_string(),
         check_type: if is_concurrent {
             "http-concurrent".to_string()
@@ -378,14 +454,10 @@ async fn run_http(
         },
         probes: probes.clone(),
         stats: stats.clone(),
+        assertions: None,
     };
 
-    if output.stats.success == 0 {
-        crate::output::mark_failure();
-    }
-
-    if mode == OutputMode::Json {
-        print_json(&output);
+    if finish(&mut output, assertions, mode) {
         return;
     }
 
@@ -394,6 +466,10 @@ async fn run_http(
     // 并发模式额外显示并发统计
     if is_concurrent {
         print_concurrent_stats(&probes, concurrency);
+    }
+
+    if let Some(evaluated) = &output.assertions {
+        assertion::print_report(evaluated);
     }
 }
 

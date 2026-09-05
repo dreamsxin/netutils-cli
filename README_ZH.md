@@ -25,6 +25,7 @@
 | `proxy-test` | 检查代理连通性、DNS 行为和请求稳定性 | `netutils proxy-test google.com --proxy socks5h://127.0.0.1:7890 --count 20` |
 | `tls` | TLS 握手与证书诊断 | `netutils tls google.com --sni google.com` |
 | `trace` | 路由追踪 | `netutils trace baidu.com` |
+| `mtu` | 路径 MTU 发现与 PMTUD 黑洞检测 | `netutils mtu baidu.com` |
 | `scan` | 端口扫描 | `netutils scan 192.168.1.1 80,443` |
 | `check` | 连通性测试 | `netutils check https://baidu.com` |
 | `http` | 发起一次 HTTP 请求并显示响应结果 | `netutils http https://example.com --show-headers` |
@@ -37,6 +38,8 @@
 | `diag` | 一键诊断 | `netutils diag` |
 | `diagnose` | 全链路诊断 (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose baidu.com` |
 | `path` | HTTP 请求路径分析 (DNS→代理/出口→Trace→TCP/TLS/HTTP) | `netutils path https://myip.ipipv.com` |
+| `completions` | 生成 shell 补全脚本 | `netutils completions bash > netutils.bash` |
+| `man` | 生成 roff 格式 man page | `netutils man > netutils.1` |
 
 ### 安装
 
@@ -345,14 +348,100 @@ netutils path https://myip.ipipv.com --no-proxy
 
 代理模式下，`path` 的 trace 明确表示“本机到代理入口”，目标 DNS 和代理后的跳点会标为不可见，不再把本地解析目标的 trace 当作实际代理链路。
 
-命令退出码约定：成功为 `0`，检测完成但失败为 `1`，CLI 参数错误为 `2`，`--total-timeout` 到期为 `124`。报告默认脱敏认证头、Cookie、API key、token 和代理凭据。
+命令退出码约定：成功为 `0`，检测完成但失败为 `1`，CLI 参数错误为 `2`，`--assert` 断言不通过为 `3`，`--total-timeout` 到期为 `124`。报告默认脱敏认证头、Cookie、API key、token 和代理凭据。
+
+### 路径 MTU 与 PMTUD 黑洞
+
+小包正常、大文件和 TLS 握手却卡死，是隧道场景最典型的 MTU 故障：路径 MTU 已经低于本机接口 MTU，而链路上某台设备又丢弃了 ICMP "fragmentation needed"，导致 PMTUD 永远无法收敛。
+
+```bash
+# 二分查找路径 MTU 并判定失败类型
+netutils mtu google.com
+
+# 已知隧道 MTU 时缩小搜索区间
+netutils mtu google.com --min-mtu 1200 --max-mtu 1500
+
+# 机器可读输出
+netutils --json mtu google.com
+```
+
+`mtu` 借助系统 `ping` 的 DF（Don't Fragment）能力探测，因此不需要提权、不需要原始套接字。它先用搜索下界确认目标在 DF 模式下可达，再向上二分。若路径设备在 ICMP 回复中通告了确切 MTU，会直接验证该值而不是继续盲搜。
+
+结论区分两种完全不同的故障：
+
+- `reduced`：收到了明确的 ICMP fragmentation-needed 回复，说明 PMTUD 正常工作，只是路径 MTU 低于本机 MTU。报告会直接给出隧道占用的字节数。
+- `blackhole`：超尺寸包完全无回复地消失，PMTUD 已失效，大流量传输会挂死。常规修复手段是下调隧道 MTU 或开启 TCP MSS clamping。
+- `inconclusive`：目标从未回应 DF ping，说明 ICMP 被全程过滤，该方法无法测量此路径。
+
+代理流量不在覆盖范围内：代理会自行建立到目标的链路，本机无法探测。
+
+### CI 断言
+
+`http` 和 `check` 支持可重复的 `--assert <EXPR>`，让探测结果直接决定流水线成败，无需再解析 JSON：
+
+```bash
+# 状态码必须为 200 且耗时低于 500ms，否则构建失败
+netutils http https://api.example.com/health --assert status=200 --assert latency<500ms
+
+# 50 次采样中成功率必须达到 99%
+netutils check https://api.example.com --count 50 --assert success_rate>=99% --assert latency<800ms
+
+# 对响应体断言
+netutils http https://api.example.com/health --assert 'body*="ok"'
+```
+
+表达式格式为 `<指标><运算符><值>`。运算符支持 `=`/`==`、`!=`、`<`、`<=`、`>`、`>=` 和 `*=`（包含子串）。值可带 `ms`、`s`、`%` 单位，时延类指标省略单位时按毫秒解释。指标支持别名，`latency` 归一为 `latency_ms`，`p95` 归一为 `p95_ms`，`code` 归一为 `status`。
+
+- `http` 指标：`status`、`latency_ms`、`body`、`body_bytes`、`final_url`、`error`、`ok`
+- `check` 指标：`success_rate`、`latency_ms`、`min_ms`、`max_ms`、`status`、`total`、`success`、`failed`、`check_type`、`target`
+
+断言失败使用独立退出码 `3`，与「探测失败」(`1`)、「用法错误」(`2`) 区分，流水线可以据此分辨「服务挂了」和「服务活着但超出预算」。表达式语法错误属于用法错误，在发出任何网络请求前就以 `2` 退出。当某指标受支持但本次运行取不到值（例如连接失败时没有 `status`，或全部探测失败时没有 `latency_ms`），报告会说明具体原因，而不是谎称指标名不存在。
+
+JSON 模式下判定结果挂在报告的 `assertions` 字段：
+
+```bash
+netutils --json http https://api.example.com --assert status=200 | jq '.assertions'
+```
+
+### 颜色控制
+
+只在有意义且安全时才输出颜色：
+
+```bash
+netutils --color never iface     # 强制纯文本
+netutils --color always iface    # 即使被管道接收也强制上色
+NO_COLOR=1 netutils iface        # 遵循 https://no-color.org
+```
+
+判定优先级为 `--color` > JSON 模式（恒为纯文本，避免 ANSI 转义破坏解析）> `NO_COLOR` > `CLICOLOR_FORCE` > `NETUTILS_COLOR` > `CLICOLOR` > stdout 是否为终端。因此把输出重定向到文件时默认就是干净文本。最终判定结果通过 `NETUTILS_COLOR` 传给插件子进程，保证插件与核心行为一致。
+
+### Shell 补全与 man page
+
+```bash
+# bash
+netutils completions bash > /etc/bash_completion.d/netutils
+
+# zsh
+netutils completions zsh > "${fpath[1]}/_netutils"
+
+# fish
+netutils completions fish > ~/.config/fish/completions/netutils.fish
+
+# PowerShell
+netutils completions powershell | Out-String | Invoke-Expression
+
+# man page
+netutils man > /usr/local/share/man/man1/netutils.1
+```
 
 ### 核心特性
 
 - **国际化**: 自动检测系统语言（中英文），`--lang zh|en` 可覆盖
 - **JSON 输出**: `--json` 全局参数，所有子命令支持，便于脚本处理
-- **颜色高亮**: 出口绿色、错误红色、虚拟网卡黄色
-- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
+- **颜色高亮**: 出口绿色、错误红色、虚拟网卡黄色；遵循 `--color` 与 `NO_COLOR`，JSON 输出恒为纯文本
+- **CI 断言**: `http` 和 `check` 支持 `--assert`，独立退出码，无需解析 JSON
+- **Shell 集成**: `completions` 支持 bash/zsh/fish/powershell/elvish，另可生成 man page
+- **命令别名**: `a`/`i`/`e`/`r`/`rt`/`p`/`pg`/`d`/`dc`/`dp`/`dcp`/`pt`/`tl`/`t`/`m`/`s`/`c`/`h`/`event`/`websocket`/`co`/`conn`/`dx`/`dg`/`pa`
 - **跨平台**: Windows (PowerShell)、Linux (`ip`/`resolvectl`)、macOS (`ifconfig`/`scutil`/`networksetup`)
 - **系统代理感知**: HTTP 检测自动读取系统代理，支持 `--proxy` 和 `--no-proxy`
 - **出口检测**: UDP 探测识别实际流量出口 + 解释选路逻辑
