@@ -71,6 +71,14 @@
 - 新增 `tests/cli.rs` 集成测试：覆盖帮助、版本、补全、man、颜色开关、断言语法错误和退出码约定，全部离线运行
 - 新增 `Cli::command().debug_assert()` 校验，CLI 定义冲突在测试阶段即暴露
 
+### 工程
+- 新增 `rust-toolchain.toml` 固定工具链到 1.98.1，CI 阻塞门与本地开发使用同一版本。
+  此前 CI 跟随 `stable`，新版 clippy 加一条 lint 就能让**没有任何代码改动**的分支变红
+  （`clippy::result_large_err` 在 1.98 就这样打断过一次插件仓库的 CI）
+- CI 增加不阻塞的 `latest-stable` 任务，跟随最新 stable 提前暴露新 lint，
+  但不再让工具链升级阻塞合并
+- 固定工具链与 `.github/` 从发布包中排除，不强迫 crate 用户下载特定版本的 rustc
+
 ## [0.3.22] - 2026-07-23
 
 ### 新增
