@@ -91,9 +91,18 @@ pub enum Commands {
         /// 记录类型（默认 A）
         #[arg(short, long, value_enum, default_value_t = DnsRecordType::A)]
         r#type: DnsRecordType,
-        /// 指定 DNS 服务器（如 8.8.8.8）
+        /// 指定 DNS 服务器（如 8.8.8.8），走 UDP/53
         #[arg(long)]
         server: Option<String>,
+        /// 通过 DoH 查询：预设名（cloudflare/google/quad9/adguard/alidns/dnspod）或 https:// URL
+        #[arg(long, value_name = "PRESET|URL", conflicts_with = "server")]
+        doh: Option<String>,
+        /// DoH 请求使用的代理（如 socks5h://127.0.0.1:1080）
+        #[arg(long, requires = "doh")]
+        proxy: Option<String>,
+        /// DoH 请求强制直连，忽略系统代理
+        #[arg(long, requires = "doh")]
+        no_proxy: bool,
     },
 
     /// 检查系统 DNS 缓存，排查代理/TUN 切换后的陈旧解析

@@ -24,7 +24,7 @@ pub enum DnsRecordType {
 }
 
 impl DnsRecordType {
-    fn to_record_type(self) -> RecordType {
+    pub(crate) fn to_record_type(self) -> RecordType {
         match self {
             DnsRecordType::A => RecordType::A,
             DnsRecordType::Aaaa => RecordType::AAAA,
@@ -32,6 +32,17 @@ impl DnsRecordType {
             DnsRecordType::Cname => RecordType::CNAME,
             DnsRecordType::Ns => RecordType::NS,
             DnsRecordType::Txt => RecordType::TXT,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            DnsRecordType::A => "A",
+            DnsRecordType::Aaaa => "AAAA",
+            DnsRecordType::Mx => "MX",
+            DnsRecordType::Cname => "CNAME",
+            DnsRecordType::Ns => "NS",
+            DnsRecordType::Txt => "TXT",
         }
     }
 }
@@ -46,10 +57,20 @@ pub struct DnsOutput {
     pub elapsed_ms: f64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DnsRecord {
     pub value: String,
     pub ttl: u32,
+}
+
+/// DoH 查询结果。`transport` 固定为 `doh`，便于脚本区分链路。
+#[derive(Serialize)]
+struct DohOutput {
+    domain: String,
+    record_type: String,
+    transport: &'static str,
+    doh: crate::doh::DohAnswer,
+    notes: Vec<String>,
 }
 
 /// 执行 DNS 查询并输出结果
@@ -57,29 +78,34 @@ pub async fn run(
     domain: &str,
     record_type: DnsRecordType,
     server: Option<String>,
+    doh: Option<String>,
+    proxy: Option<String>,
+    no_proxy: bool,
     mode: OutputMode,
 ) {
+    if let Some(endpoint) = doh {
+        run_doh(
+            domain,
+            record_type,
+            &endpoint,
+            server.is_some(),
+            proxy,
+            no_proxy,
+            mode,
+        )
+        .await;
+        return;
+    }
+
     let resolver = match build_resolver(server.as_deref()) {
         Ok(resolver) => resolver,
         Err(err) => {
-            crate::output::mark_failure();
-            if mode == OutputMode::Json {
-                print_json_error(&err);
-            } else {
-                println!("  {}", err.red());
-            }
+            fail(&err, mode);
             return;
         }
     };
 
-    let type_str = match record_type {
-        DnsRecordType::A => "A",
-        DnsRecordType::Aaaa => "AAAA",
-        DnsRecordType::Mx => "MX",
-        DnsRecordType::Cname => "CNAME",
-        DnsRecordType::Ns => "NS",
-        DnsRecordType::Txt => "TXT",
-    };
+    let type_str = record_type.as_str();
 
     let start = std::time::Instant::now();
     let result = query_record(&resolver, domain, record_type).await;
@@ -143,6 +169,144 @@ pub async fn run(
     }
 }
 
+fn fail(message: &str, mode: OutputMode) {
+    crate::output::mark_failure();
+    if mode == OutputMode::Json {
+        print_json_error(message);
+    } else {
+        println!("  {}", message.red());
+    }
+}
+
+/// 通过 DoH 查询并输出。
+///
+/// DoH 走 HTTPS，因此与系统 DNS 服务器列表完全无关——这正是它能绕过
+/// VPN/TUN split-DNS 的原因，也是 `dns-path`/`dns-leak` 里标注的盲区。
+async fn run_doh(
+    domain: &str,
+    record_type: DnsRecordType,
+    endpoint: &str,
+    server_given: bool,
+    proxy: Option<String>,
+    no_proxy: bool,
+    mode: OutputMode,
+) {
+    if server_given {
+        // --server 走 UDP/53，--doh 走 HTTPS，两者不是同一条链路，
+        // 同时给出只会让结果无法归因。
+        fail(
+            "--server and --doh select different transports; specify only one",
+            mode,
+        );
+        return;
+    }
+
+    let answer = crate::doh::query(
+        endpoint,
+        domain,
+        record_type.to_record_type(),
+        DNS_QUERY_TIMEOUT,
+        proxy,
+        no_proxy,
+    )
+    .await;
+
+    let answer = match answer {
+        Ok(answer) => answer,
+        Err(err) => {
+            fail(&t("dns.fail").replace("{0}", &err), mode);
+            return;
+        }
+    };
+
+    let type_str = record_type.as_str();
+    let output = DohOutput {
+        domain: domain.to_string(),
+        record_type: type_str.to_string(),
+        transport: "doh",
+        doh: answer,
+        notes: doh_notes(),
+    };
+
+    if output.doh.records.is_empty() {
+        crate::output::mark_failure();
+    }
+
+    if mode == OutputMode::Json {
+        print_json(&output);
+        return;
+    }
+
+    println!();
+    println!(
+        "{}",
+        t("dns.title")
+            .replace("{0}", domain)
+            .replace("{1}", type_str)
+            .bold()
+    );
+    println!(
+        "  Resolver: {}{} (DoH)",
+        output.doh.endpoint,
+        output
+            .doh
+            .preset
+            .as_ref()
+            .map(|preset| format!(" [{preset}]"))
+            .unwrap_or_default()
+    );
+    println!(
+        "  Proxy: {}{}",
+        output.doh.proxy.mode,
+        output
+            .doh
+            .proxy
+            .value
+            .as_ref()
+            .map(|value| format!(" ({value})"))
+            .unwrap_or_default()
+    );
+    println!("  Response Code: {}", output.doh.response_code);
+
+    if output.doh.records.is_empty() {
+        println!("  {}", t("dns.no_record").replace("{0}", type_str));
+    } else {
+        let h_idx = t("dns.idx");
+        let h_val = t("dns.value");
+        let h_ttl = t("dns.ttl");
+        let headers = [h_idx.as_str(), h_val.as_str(), h_ttl.as_str()];
+        let rows: Vec<Vec<String>> = output
+            .doh
+            .records
+            .iter()
+            .enumerate()
+            .map(|(i, r)| vec![(i + 1).to_string(), r.value.clone(), format!("{}s", r.ttl)])
+            .collect();
+        print_table(&headers, &rows);
+    }
+
+    println!();
+    println!(
+        "  {}",
+        t("dns.elapsed").replace("{0}", &format!("{:.2}", output.doh.elapsed_ms))
+    );
+    println!();
+    for note in &output.notes {
+        println!("  {}", note.dimmed());
+    }
+}
+
+fn doh_notes() -> Vec<String> {
+    vec![
+        "DoH bypasses the operating-system resolver entirely, so hosts file, \
+         VPN split-DNS, and the system DNS cache do not apply."
+            .to_string(),
+        "Compare with `netutils dns` and `netutils dns-compare` to see whether \
+         the DoH answer differs from the system resolution path."
+            .to_string(),
+    ]
+}
+
 /// 构建 DNS resolver，支持自定义服务器
 fn build_resolver(server: Option<&str>) -> Result<TokioAsyncResolver, String> {
     match server {
@@ -201,7 +365,7 @@ async fn query_record(
 }
 
 /// 格式化 DNS 记录为字符串
-fn format_record(rdata: &RData) -> String {
+pub(crate) fn format_record(rdata: &RData) -> String {
     match rdata {
         RData::A(addr) => addr.0.to_string(),
         RData::AAAA(addr) => addr.0.to_string(),

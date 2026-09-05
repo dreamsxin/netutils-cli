@@ -17,7 +17,7 @@
 | `route-get` | 查询目标实际选路，判断是否走 TUN/VPN | `netutils route-get google.com` |
 | `proxy` | 代理设置 | `netutils proxy` |
 | `ping` | Ping 主机 (ICMP/TCP) | `netutils ping baidu.com --count 4` |
-| `dns` | DNS 查询 | `netutils dns baidu.com --type mx` |
+| `dns` | DNS 查询（UDP/53 或 DoH） | `netutils dns baidu.com --type mx` |
 | `dns-cache` | 检查/清理系统 DNS 缓存 | `netutils dns-cache google.com` |
 | `dns-path` | 查看 DNS server 及到 DNS server 的本机路由 | `netutils dns-path google.com` |
 | `dns-compare` | 对比系统默认解析与指定 DNS server 直查结果 | `netutils dns-compare google.com --server 8.8.8.8` |
@@ -223,6 +223,32 @@ netutils dns-leak --no-external
 对于 HTTP 和 `socks5h` 远程 DNS 代理，Surfshark 与 ip-api-edns 的 resolver 观测会合并判断。全部样本成功且国家一致时，多个 resolver IP 会被视为正常地址池；同一国家内如果 Surfshark 返回了不同的已知城市，也视为泄露信号。跨国家或跨已知城市时判定为 DNS 泄露。国家信息缺失或部分样本失败时返回 `low`（证据不足）。Surfshark 的 `Leak` 字段仍会展示，但在远程 DNS 代理模式下不会覆盖地理一致性结论。
 
 系统 DNS 列表可能包含未启用网卡、split-DNS、scoped resolver 或本地 stub。DNS server 走不同接口只作为辅助证据，不单独证明泄露。浏览器 DoH/DoT 和应用内置 resolver 仍可能走不同路径。
+
+### DNS over HTTPS
+
+`dns --doh` 走 DoH resolver（RFC 8484）而不是操作系统 resolver——浏览器和部分应用正是用这条路径绕过系统 DNS 设置：
+
+```bash
+# 使用内置预设
+netutils dns example.com --doh cloudflare
+netutils dns example.com --type aaaa --doh alidns
+
+# 或直接指定任意 DoH endpoint
+netutils dns example.com --doh https://dns.example.net/dns-query
+
+# 观察代理侧如何解析，或强制直连
+netutils dns example.com --doh cloudflare --proxy socks5h://127.0.0.1:1080
+netutils dns example.com --doh cloudflare --no-proxy
+```
+
+预设包括 `cloudflare`、`google`、`quad9`、`adguard`、`alidns`、`dnspod`。
+
+客户端与其他命令共用同一套 HTTP 栈，因此 `--proxy`、`--no-proxy` 和系统代理都作用于 DoH 请求本身。这是刻意设计：把 DoH 查询送进代理，才能观察代理侧解析出什么；而挂在 DNS 库上的 DoH 实现无法接入这里的代理配置。
+
+`--doh` 与 `--server` 互斥——两者分别是 HTTPS 和 UDP/53，同时给出会让结果无法归因。明文 `http://` endpoint 会被拒绝而不是静默接受：明文之上的 DoH 毫无隐私意义。
+
+由于 DoH 完全绕过操作系统 resolver，hosts 文件、VPN split-DNS 规则和系统 DNS 缓存都不生效。把 DoH 结果与 `netutils dns`、`netutils dns-compare` 对比，即可看出两条路径是否分歧。
+
 
 当你怀疑“本地 DNS 缓存/解析不对，但代理侧 DNS 可以访问”时，用 `proxy-test` 对比本地解析和代理域名请求：
 

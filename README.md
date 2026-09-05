@@ -17,7 +17,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `route-get` | Show the actual route selected for a target and whether it uses TUN/VPN | `netutils route-get google.com` |
 | `proxy` | Proxy settings | `netutils proxy` |
 | `ping` | Ping host (ICMP/TCP) | `netutils ping google.com --count 4` |
-| `dns` | DNS query | `netutils dns example.com --type mx` |
+| `dns` | DNS query (UDP/53 or DoH) | `netutils dns example.com --type mx` |
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
@@ -178,6 +178,32 @@ netutils dns-leak --no-external
 For HTTP and `socks5h` remote-DNS proxies, resolver observations from Surfshark and ip-api-edns are evaluated together. Multiple resolver IPs are considered a normal resolver pool when all samples are successful and their countries agree; differing known Surfshark cities within the same country are also treated as a leak signal. Resolver IPs spanning different countries or known cities are classified as a DNS leak. Missing country data or a partial sample failure produces an inconclusive `low` result. Surfshark's `Leak` field remains visible but does not by itself override the geographic consistency result for a remote-DNS proxy.
 
 Local DNS server lists can include inactive adapters, split-DNS entries, scoped resolvers, and loopback stubs. A different local interface is therefore treated as supporting evidence rather than proof by itself. Browser DoH/DoT and application-specific resolvers may still use a different path.
+
+### DNS Over HTTPS
+
+`dns --doh` queries a DoH resolver (RFC 8484) instead of the operating-system resolver, which is exactly the path that browsers and some applications use to bypass system DNS settings:
+
+```bash
+# Use a built-in preset
+netutils dns example.com --doh cloudflare
+netutils dns example.com --type aaaa --doh quad9
+
+# Or any DoH endpoint
+netutils dns example.com --doh https://dns.example.net/dns-query
+
+# Observe how a proxy resolves names, or force direct access
+netutils dns example.com --doh cloudflare --proxy socks5h://127.0.0.1:1080
+netutils dns example.com --doh cloudflare --no-proxy
+```
+
+Presets are `cloudflare`, `google`, `quad9`, `adguard`, `alidns`, and `dnspod`.
+
+The client is built on the same HTTP stack as the other commands, so `--proxy`, `--no-proxy`, and the system proxy all apply to the DoH request itself. That is deliberate: sending the DoH query through a proxy is how you observe what the proxy side resolves, and a DoH implementation bolted onto the DNS library could not reach this proxy configuration.
+
+`--doh` and `--server` are mutually exclusive because they use different transports — HTTPS versus UDP/53 — and reporting both at once would make the result impossible to attribute. Plaintext `http://` endpoints are refused rather than silently accepted, since DoH over cleartext provides no privacy at all.
+
+Because DoH bypasses the operating-system resolver, the hosts file, VPN split-DNS rules, and the system DNS cache do not apply. Compare the DoH answer with `netutils dns` and `netutils dns-compare` to see whether the two paths disagree.
+
 
 When you suspect local DNS cache or local resolution is stale while proxy-side DNS may still work, use `proxy-test`:
 
@@ -392,7 +418,7 @@ netutils man > /usr/local/share/man/man1/netutils.1
 - **System proxy aware**: HTTP checks auto-detect system proxy and support `--proxy` and `--no-proxy`
 - **Egress detection**: UDP probe identifies actual traffic egress + explains routing logic
 - **TUN/VPN detection**: Combines interface type, route result, and egress selection to explain whether traffic uses a virtual adapter
-- **DNS troubleshooting**: Includes DNS cache inspection, DNS server routing, default-vs-direct resolution comparison, and proxy-side DNS availability inference
+- **DNS troubleshooting**: Includes DNS cache inspection, DNS server routing, default-vs-direct resolution comparison, DoH queries, and proxy-side DNS availability inference
 - **Timeout protection**: External system commands run with timeouts to reduce the chance of the tool hanging
 - **Port range syntax**: `netutils scan host 80-100,443,8080-8090`
 
@@ -426,6 +452,7 @@ netutils/
     │   └── proxy.rs         #   Proxy detection
     ├── ping/mod.rs          # Ping (ICMP/TCP)
     ├── dns/mod.rs           # DNS query
+    ├── doh.rs               # DNS over HTTPS client (RFC 8484)
     ├── dns_cache.rs         # DNS cache inspection
     ├── dns_path.rs          # DNS server path inspection
     ├── dns_compare.rs       # DNS result comparison

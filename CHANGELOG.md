@@ -2,6 +2,25 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.5.0] - 2026-09-05
+
+### 新增
+- `dns` 支持 DoH（DNS over HTTPS，RFC 8484），补上此前代码里自己标注的盲区
+  - `--doh <PRESET|URL>`：预设 `cloudflare`/`google`/`quad9`/`adguard`/`alidns`/`dnspod`，或直接传 https URL
+  - 基于 `reqwest` 而非 trust-dns 内建 DoH 实现，因此 DoH 查询能复用本项目的代理选择；
+    这是排查「代理侧 DNS 行为」的前提，trust-dns 内建 DoH 无法接入这里的代理配置
+  - `--proxy` / `--no-proxy` 控制 DoH 请求的代理，未选定代理时显式禁用环境代理
+  - 拒绝 `http://` 明文 endpoint：明文 DoH 没有隐私意义，静默接受只会给出虚假的安全感
+  - `--doh` 与 `--server` 互斥：两者分别走 HTTPS 和 UDP/53，同时给出会让结果无法归因
+  - 报文 ID 固定为 0，遵循 RFC 8484 关于 HTTP 缓存的建议
+  - 输出 DNS 响应码、实际 endpoint、代理模式，并提示 DoH 完全绕过系统 resolver
+  - JSON 输出带 `transport: "doh"` 字段，便于脚本区分链路
+
+### 变更
+- DoH 请求失败时展开错误的 source 链。`reqwest::Error` 的 Display 只给出
+  「error sending request for url ...」，真正的原因（连接被拒、TLS 失败、超时）都在 source 里，
+  对诊断工具而言等于没说
+
 ## [0.4.0] - 2026-09-05
 
 ### 新增

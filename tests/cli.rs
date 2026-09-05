@@ -180,3 +180,63 @@ fn mtu_help_documents_search_bounds() {
     assert!(text.contains("--min-mtu"));
     assert!(text.contains("--max-mtu"));
 }
+
+#[test]
+fn dns_help_documents_doh() {
+    let output = netutils(&["dns", "--help"]);
+
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("--doh"), "stdout: {text}");
+    assert!(text.contains("cloudflare"), "presets should be listed");
+}
+
+#[test]
+fn doh_and_server_are_mutually_exclusive() {
+    // 两者走不同传输层，同时给出会让结果无法归因，属于用法错误。
+    let output = netutils(&[
+        "dns",
+        "example.com",
+        "--server",
+        "8.8.8.8",
+        "--doh",
+        "cloudflare",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn doh_proxy_flags_require_doh() {
+    let output = netutils(&["dns", "example.com", "--proxy", "http://127.0.0.1:1"]);
+
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn unknown_doh_preset_fails_before_any_request() {
+    let output = netutils(&["--json", "dns", "example.com", "--doh", "cloudfalre"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert!(text.contains("unknown DoH preset"), "stdout: {text}");
+    assert!(text.contains("cloudflare"), "should list valid presets");
+}
+
+#[test]
+fn plaintext_doh_endpoint_is_refused() {
+    let output = netutils(&[
+        "--json",
+        "dns",
+        "example.com",
+        "--doh",
+        "http://example.com/dns-query",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout(&output).contains("refusing plaintext"),
+        "stdout: {}",
+        stdout(&output)
+    );
+}

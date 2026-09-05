@@ -10,6 +10,7 @@ mod dns_cache;
 mod dns_compare;
 mod dns_leak;
 mod dns_path;
+mod doh;
 mod http_client;
 mod i18n;
 mod icmp;
@@ -92,7 +93,10 @@ async fn main() -> anyhow::Result<()> {
                 domain,
                 r#type,
                 server,
-            }) => dns::run(&domain, r#type, server, mode).await,
+                doh,
+                proxy,
+                no_proxy,
+            }) => dns::run(&domain, r#type, server, doh, proxy, no_proxy, mode).await,
             Some(Commands::DnsCache {
                 domain,
                 flush,
