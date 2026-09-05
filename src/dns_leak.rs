@@ -35,6 +35,8 @@ pub struct DnsLeakReport {
     pub system_dns_servers: Vec<DnsLeakServer>,
     pub resolver_path: Vec<ResolverPathEntry>,
     pub external_probes: Vec<ExternalProbe>,
+    /// 加密 DNS（DoH/DoT）观察结果；未启用时为空数组
+    pub encrypted_dns: Vec<EncryptedDnsObservation>,
     pub resolver_public_ips: Vec<String>,
     pub egress_public_ip: Option<String>,
     pub assessment: String,
@@ -83,6 +85,28 @@ pub struct ResolverObservation {
     pub provider_leak: Option<bool>,
 }
 
+/// 一次加密 DNS 观察。
+///
+/// 手法与 `whoami.akamai.net` 探针相同——该域名的 A 记录返回的是**执行查询的
+/// resolver 的 IP**。区别只在于这次查询走 DoH/DoT 而不是系统 resolver，
+/// 因此可以直接回答「如果某个应用自己走加密 DNS，它的解析从哪里出去」。
+#[derive(Debug, Clone, Serialize)]
+pub struct EncryptedDnsObservation {
+    /// `doh` 或 `dot`
+    pub transport: &'static str,
+    /// 实际使用的 endpoint
+    pub endpoint: String,
+    /// 该传输通道下观察到的 resolver IP
+    pub resolver_ips: Vec<String>,
+    /// 代理模式；DoT 恒为 `direct-not-proxyable`
+    pub proxy_mode: String,
+    pub ok: bool,
+    pub elapsed_ms: f64,
+    pub error: Option<String>,
+    /// 与系统解析路径观察到的 resolver 是否不同；任一侧缺数据时为 None
+    pub differs_from_system: Option<bool>,
+}
+
 #[derive(Debug)]
 struct LocalDnsLeakAnalysis {
     tun_mode: bool,
@@ -127,12 +151,15 @@ struct IpApiEdnsResolver {
     ip: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     proxy: Option<String>,
     no_proxy: bool,
     no_external: bool,
     timeout: u64,
     count: usize,
+    doh: Option<String>,
+    dot: Option<String>,
     mode: OutputMode,
 ) {
     let timeout = Duration::from_secs(timeout);
@@ -159,14 +186,22 @@ pub async fn run(
 
     let mut external_probes = Vec::new();
     let mut egress_public_ip = None;
+    let mut encrypted_dns = Vec::new();
     if !no_external {
-        let (surfshark, ip_api_edns, akamai, cloudflare) = tokio::join!(
+        let (surfshark, ip_api_edns, akamai, cloudflare, encrypted) = tokio::join!(
             probe_surfshark_many(surfshark_queries, surfshark_proxy.clone(), timeout),
             probe_ip_api_edns_many(count, ip_api_proxy, timeout),
             probe_akamai_whoami(timeout),
             probe_cloudflare_trace(cloudflare_proxy.as_deref(), timeout),
+            probe_encrypted_dns(doh, dot, proxy.clone(), no_proxy, timeout),
         );
         egress_public_ip = cloudflare.observed_ips.first().cloned();
+        // 系统解析路径的 resolver 观察必须在比较之前取出。
+        let system_resolver_ips = akamai.observed_ips.clone();
+        encrypted_dns = encrypted
+            .into_iter()
+            .map(|observation| compare_with_system(observation, &system_resolver_ips))
+            .collect();
         external_probes.extend(surfshark);
         external_probes.extend(ip_api_edns);
         external_probes.push(akamai);
@@ -208,7 +243,14 @@ pub async fn run(
         egress_public_ip,
         assessment,
         risk_level: risk_level.clone(),
-        notes: build_notes(no_external, tun_mode, proxy_active, proxy_remote_dns),
+        notes: build_notes(
+            no_external,
+            tun_mode,
+            proxy_active,
+            proxy_remote_dns,
+            !encrypted_dns.is_empty(),
+        ),
+        encrypted_dns,
     };
 
     if risk_level == "high" {
@@ -605,6 +647,146 @@ async fn probe_ip_api_edns(proxy: Option<&str>, timeout: Duration) -> ExternalPr
             "timeout".to_string(),
         ),
     }
+}
+
+/// 通过 DoH/DoT 观察加密路径上的 resolver。
+///
+/// 两种传输互相独立，并发执行；任一未指定则跳过。
+async fn probe_encrypted_dns(
+    doh: Option<String>,
+    dot: Option<String>,
+    proxy: Option<String>,
+    no_proxy: bool,
+    timeout: Duration,
+) -> Vec<EncryptedDnsObservation> {
+    let (doh_observation, dot_observation) = tokio::join!(
+        async {
+            match doh {
+                Some(endpoint) => Some(probe_doh_whoami(&endpoint, proxy, no_proxy, timeout).await),
+                None => None,
+            }
+        },
+        async {
+            match dot {
+                Some(target) => Some(probe_dot_whoami(&target, timeout).await),
+                None => None,
+            }
+        },
+    );
+    [doh_observation, dot_observation]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+async fn probe_doh_whoami(
+    endpoint: &str,
+    proxy: Option<String>,
+    no_proxy: bool,
+    timeout: Duration,
+) -> EncryptedDnsObservation {
+    let start = Instant::now();
+    match crate::doh::query(
+        endpoint,
+        WHOAMI_DOMAIN,
+        trust_dns_resolver::proto::rr::RecordType::A,
+        timeout,
+        proxy,
+        no_proxy,
+    )
+    .await
+    {
+        Ok(answer) => EncryptedDnsObservation {
+            transport: "doh",
+            endpoint: answer.endpoint,
+            resolver_ips: dedup_strings(
+                answer
+                    .records
+                    .into_iter()
+                    .map(|record| record.value)
+                    .collect(),
+            ),
+            proxy_mode: answer.proxy.mode,
+            ok: true,
+            elapsed_ms: answer.elapsed_ms,
+            error: None,
+            differs_from_system: None,
+        },
+        Err(err) => EncryptedDnsObservation {
+            transport: "doh",
+            endpoint: endpoint.to_string(),
+            resolver_ips: Vec::new(),
+            proxy_mode: "unknown".to_string(),
+            ok: false,
+            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            error: Some(err),
+            differs_from_system: None,
+        },
+    }
+}
+
+async fn probe_dot_whoami(target: &str, timeout: Duration) -> EncryptedDnsObservation {
+    let start = Instant::now();
+    // DoT 是 853 端口上的裸 TLS，无法穿代理，这里如实标注而不是假装应用了代理。
+    let proxy_mode = "direct-not-proxyable".to_string();
+    match crate::dot::query(
+        target,
+        WHOAMI_DOMAIN,
+        trust_dns_resolver::proto::rr::RecordType::A,
+        timeout,
+    )
+    .await
+    {
+        Ok(answer) => EncryptedDnsObservation {
+            transport: "dot",
+            endpoint: answer.endpoint,
+            resolver_ips: dedup_strings(
+                answer
+                    .records
+                    .into_iter()
+                    .map(|record| record.value)
+                    .collect(),
+            ),
+            proxy_mode,
+            ok: true,
+            elapsed_ms: answer.elapsed_ms,
+            error: None,
+            differs_from_system: None,
+        },
+        Err(err) => EncryptedDnsObservation {
+            transport: "dot",
+            endpoint: target.to_string(),
+            resolver_ips: Vec::new(),
+            proxy_mode,
+            ok: false,
+            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+            error: Some(err),
+            differs_from_system: None,
+        },
+    }
+}
+
+/// 与系统解析路径的 resolver 观察对比。
+///
+/// 任一侧没有数据时返回 `None`：无从比较时不能给出「相同」或「不同」的结论。
+fn compare_with_system(
+    mut observation: EncryptedDnsObservation,
+    system_resolver_ips: &[String],
+) -> EncryptedDnsObservation {
+    observation.differs_from_system =
+        if observation.resolver_ips.is_empty() || system_resolver_ips.is_empty() {
+            None
+        } else {
+            let system: std::collections::BTreeSet<&str> =
+                system_resolver_ips.iter().map(String::as_str).collect();
+            Some(
+                observation
+                    .resolver_ips
+                    .iter()
+                    .all(|ip| !system.contains(ip.as_str())),
+            )
+        };
+    observation
 }
 
 async fn probe_akamai_whoami(timeout: Duration) -> ExternalProbe {
@@ -1140,6 +1322,7 @@ fn build_notes(
     tun_mode: bool,
     proxy_active: bool,
     proxy_remote_dns: bool,
+    encrypted_dns_probed: bool,
 ) -> Vec<String> {
     let mut notes = Vec::new();
     if tun_mode {
@@ -1183,10 +1366,17 @@ fn build_notes(
         "System DNS lists may include inactive, scoped, split-DNS, or local stub resolvers; a different interface is a candidate signal, not proof by itself."
             .to_string(),
     );
-    notes.push(
-        "Browser DoH/DoT and application-specific resolvers can differ from this command's resolver path."
-            .to_string(),
-    );
+    if encrypted_dns_probed {
+        notes.push(
+            "The encrypted DNS section measures whoami.akamai.net over DoH/DoT, so it shows where an application using encrypted DNS would egress; it does not change the risk level, which only rates the system resolver path."
+                .to_string(),
+        );
+    } else {
+        notes.push(
+            "Browser DoH/DoT and application-specific resolvers can differ from this command's resolver path; pass --doh or --dot to measure that path."
+                .to_string(),
+        );
+    }
     notes
 }
 
@@ -1345,6 +1535,50 @@ fn print_report(report: &DnsLeakReport) {
         }
     }
 
+    if !report.encrypted_dns.is_empty() {
+        println!();
+        println!("{}", "Encrypted DNS (DoH/DoT)".bold());
+        let rows = report
+            .encrypted_dns
+            .iter()
+            .map(|observation| {
+                let status = if observation.ok {
+                    "ok".green().to_string()
+                } else {
+                    "failed".red().to_string()
+                };
+                let differs = match observation.differs_from_system {
+                    Some(true) => "yes".yellow().to_string(),
+                    Some(false) => "no".green().to_string(),
+                    None => "--".to_string(),
+                };
+                vec![
+                    observation.transport.to_uppercase(),
+                    observation.endpoint.clone(),
+                    value_or_dash(&observation.resolver_ips.join(", ")),
+                    observation.proxy_mode.clone(),
+                    status,
+                    format!("{:.2}ms", observation.elapsed_ms),
+                    differs,
+                    value_or_dash(observation.error.as_deref().unwrap_or_default()),
+                ]
+            })
+            .collect::<Vec<_>>();
+        print_table(
+            &[
+                "Transport",
+                "Endpoint",
+                "Resolver IPs",
+                "Proxy",
+                "Status",
+                "Latency",
+                "Differs From System",
+                "Error",
+            ],
+            &rows,
+        );
+    }
+
     println!();
     println!("{}", "Assessment".bold());
     let risk_colored = match report.risk_level.as_str() {
@@ -1380,6 +1614,77 @@ fn value_or_dash(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encrypted(transport: &'static str, resolver_ips: &[&str]) -> EncryptedDnsObservation {
+        EncryptedDnsObservation {
+            transport,
+            endpoint: "https://example.net/dns-query".to_string(),
+            resolver_ips: resolver_ips.iter().map(|ip| (*ip).to_string()).collect(),
+            proxy_mode: "direct".to_string(),
+            ok: !resolver_ips.is_empty(),
+            elapsed_ms: 1.0,
+            error: None,
+            differs_from_system: None,
+        }
+    }
+
+    #[test]
+    fn encrypted_resolver_matching_system_is_not_a_divergence() {
+        let observation = compare_with_system(
+            encrypted("doh", &["203.0.113.10"]),
+            &["203.0.113.10".to_string()],
+        );
+
+        assert_eq!(observation.differs_from_system, Some(false));
+    }
+
+    #[test]
+    fn encrypted_resolver_on_another_ip_is_a_divergence() {
+        let observation = compare_with_system(
+            encrypted("doh", &["198.51.100.7"]),
+            &["203.0.113.10".to_string()],
+        );
+
+        assert_eq!(observation.differs_from_system, Some(true));
+    }
+
+    #[test]
+    fn partial_overlap_is_not_reported_as_divergence() {
+        // 只要有一个 resolver 与系统路径重合，就不能说加密路径「走的是别处」。
+        let observation = compare_with_system(
+            encrypted("dot", &["198.51.100.7", "203.0.113.10"]),
+            &["203.0.113.10".to_string()],
+        );
+
+        assert_eq!(observation.differs_from_system, Some(false));
+    }
+
+    #[test]
+    fn missing_data_on_either_side_is_inconclusive() {
+        // 加密探针失败
+        let failed = compare_with_system(encrypted("doh", &[]), &["203.0.113.10".to_string()]);
+        assert_eq!(failed.differs_from_system, None);
+
+        // 系统路径没有观察值
+        let no_system = compare_with_system(encrypted("doh", &["198.51.100.7"]), &[]);
+        assert_eq!(no_system.differs_from_system, None);
+    }
+
+    #[test]
+    fn encrypted_probe_note_replaces_the_generic_disclaimer() {
+        let with_probe = build_notes(false, false, false, false, true);
+        let without_probe = build_notes(false, false, false, false, false);
+
+        assert!(with_probe
+            .iter()
+            .any(|note| note.contains("does not change the risk level")));
+        assert!(!with_probe
+            .iter()
+            .any(|note| note.contains("pass --doh or --dot")));
+        assert!(without_probe
+            .iter()
+            .any(|note| note.contains("pass --doh or --dot")));
+    }
 
     fn path_entry(server: &str, route: Option<&str>, egress: Option<&str>) -> ResolverPathEntry {
         ResolverPathEntry {

@@ -216,7 +216,16 @@ netutils dns-leak --proxy socks5h://127.0.0.1:1080 --count 5
 
 # 只分析本机 DNS server 和路由，不访问外部探测服务
 netutils dns-leak --no-external
+
+# 额外测量「应用自己走加密 DNS 时，解析从哪里出去」
+netutils dns-leak --doh cloudflare
+netutils dns-leak --doh cloudflare --dot quad9
 ```
+
+`--doh` / `--dot` 会追加一个 **Encrypted DNS** 段落。它通过所选传输解析 `whoami.akamai.net`——该域名的 A 记录返回的正是执行查询的 resolver 的 IP——再与系统解析路径观察到的 resolver 对比。`differs_from_system` 回答了这条命令其余部分无法回答的问题：如果浏览器或应用自己走加密 DNS，它的解析是否从别处出去。部分重合算作「不同」为否，任一侧缺数据则输出 `null` 而不是猜测。
+
+该段落**刻意不参与** `risk_level` 判定。风险等级只评估系统 resolver 路径；加密 DNS 是另一条链路，把它折进同一个结论会让含义变得不清。DoT 的 `proxy_mode` 标为 `direct-not-proxyable`，如实说明它不走代理，而不是假装应用了代理。
+
 
 `dns-leak` 会并发执行两组 resolver 探针。Surfshark 探针查询随机的 `*.ipv4.surfsharkdns.com` 域名，显示 resolver IP、ISP、国家、城市和供应商返回的 `Leak` 标记；`ip-api-edns` 探针从 `https://edns.ip-api.com/json` 发起请求，跟随服务端生成的随机域名跳转，显示 resolver IP、国家和组织。`--count 1..10` 控制每个提供商的样本数，因此默认值 3 表示分别执行 3 个 Surfshark 和 3 个 ip-api-edns 样本。同时使用 `whoami.akamai.net` 的 A 记录作为辅助 resolver 观测，并仅使用 Cloudflare trace 获取 HTTP 公网出口。resolver IP 与 HTTP 出口 IP 会分别展示，不再假设两者必须相同。HTTP 探针会遵循显式代理或系统代理，因此 HTTP 和 `socks5h` 代理可以反映代理侧 DNS 行为；使用 `--no-proxy` 可强制直连。
 

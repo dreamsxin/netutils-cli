@@ -171,7 +171,16 @@ netutils dns-leak --proxy socks5h://127.0.0.1:1080 --count 5
 
 # Perform only local DNS server and route analysis
 netutils dns-leak --no-external
+
+# Also measure where an application using encrypted DNS would egress
+netutils dns-leak --doh cloudflare
+netutils dns-leak --doh cloudflare --dot quad9
 ```
+
+`--doh` and `--dot` add an **Encrypted DNS** section. It resolves `whoami.akamai.net` over the chosen transport — that domain's A record returns the IP of the resolver that performed the lookup — and compares it with the resolver observed on the system path. `differs_from_system` answers the question the rest of the command cannot: if a browser or application uses encrypted DNS, does its resolution leave from somewhere else? Partial overlap counts as "not different", and missing data on either side reports `null` rather than guessing.
+
+This section deliberately does **not** affect `risk_level`. The risk rating covers the system resolver path only; encrypted DNS is a separate path, and folding it into the same verdict would make the conclusion ambiguous. DoT reports `proxy_mode` as `direct-not-proxyable` instead of pretending a proxy was applied.
+
 
 `dns-leak` runs two resolver probes concurrently. Surfshark queries random `*.ipv4.surfsharkdns.com` hostnames and reports resolver IP, ISP, country, city, and its provider-defined `Leak` flag. The `ip-api-edns` probe starts at `https://edns.ip-api.com/json`, follows the service-generated random-host redirect, and reports resolver IP, country, and organization. `--count 1..10` controls the number of samples run by each provider, so the default value of 3 produces three Surfshark samples and three ip-api-edns samples. The command also queries the `whoami.akamai.net` A record as a secondary resolver observation and uses Cloudflare trace only for the HTTP egress IP. Resolver IPs and HTTP egress IPs are reported separately; they are not expected to be identical. Explicit and system proxies are honored for the HTTP probes, so HTTP and `socks5h` proxies can reveal proxy-side DNS behavior. Use `--no-proxy` to force direct requests.
 

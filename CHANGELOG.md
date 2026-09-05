@@ -22,16 +22,23 @@
   - 拒绝纯 IP：DoT 依赖证书校验，只给 IP 无法验证服务器身份，那样的「加密」没有意义
   - 明确不支持代理：DoT 是 853 端口上的裸 TLS 流，穿代理需要 CONNECT 隧道
   - JSON 输出带 `transport: "dot"` 字段
-
-### 变更
-- DoH 请求失败时展开错误的 source 链。`reqwest::Error` 的 Display 只给出
-  「error sending request for url ...」，真正的原因（连接被拒、TLS 失败、超时）都在 source 里，
-  对诊断工具而言等于没说
+- `dns-leak` 新增加密 DNS 观察：`--doh <PRESET|URL>` / `--dot <PRESET|HOST>`
+  - 手法与既有的 `whoami.akamai.net` 探针相同（该域名的 A 记录返回执行查询的 resolver IP），
+    区别在于这次走 DoH/DoT，因此能回答「应用自己走加密 DNS 时，解析从哪里出去」
+  - 与系统解析路径的 resolver 观察对比，输出 `differs_from_system`；任一侧缺数据时为 `null`，
+    部分重合不算「走的是别处」
+  - **不参与风险判定**：`risk_level` 仍只评估系统 resolver 路径。加密路径是另一条链路，
+    把它塞进现有判定会让结论含义不清；报告里明确说明这一点
+  - DoT 的 `proxy_mode` 标为 `direct-not-proxyable`，如实说明它不走代理而非假装应用了代理
+  - 未传 `--doh`/`--dot` 时行为与之前完全一致；`--no-external` 同时跳过加密探针
 
 ### 修复
 - `dns --dot X --proxy Y` 此前能通过参数解析并**静默丢弃** `--proxy`：
   clap 的 `--proxy requires doh` 规则在 `--dot` 同时出现时被冲突规则抵消。
   现在显式拦下并以退出码 2 报用法错误，而不是让用户误以为查询走了代理
+- 修复 `completions` 与 `man` 在 Windows 上栈溢出：`clap_complete`/`clap_mangen` 会深度遍历
+  整棵命令树，新增参数后超出默认 1MB 主线程栈（0.3.17 曾因同类原因拆分 `plugin` 解析器）。
+  现在生成动作在显式给足栈空间的独立线程上执行，不再随命令树增长而踩线
 
 ## [0.4.0] - 2026-09-05
 
