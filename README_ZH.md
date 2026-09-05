@@ -17,7 +17,7 @@
 | `route-get` | 查询目标实际选路，判断是否走 TUN/VPN | `netutils route-get google.com` |
 | `proxy` | 代理设置 | `netutils proxy` |
 | `ping` | Ping 主机 (ICMP/TCP) | `netutils ping baidu.com --count 4` |
-| `dns` | DNS 查询（UDP/53 或 DoH） | `netutils dns baidu.com --type mx` |
+| `dns` | DNS 查询（UDP/53、DoH 或 DoT） | `netutils dns baidu.com --type mx` |
 | `dns-cache` | 检查/清理系统 DNS 缓存 | `netutils dns-cache google.com` |
 | `dns-path` | 查看 DNS server 及到 DNS server 的本机路由 | `netutils dns-path google.com` |
 | `dns-compare` | 对比系统默认解析与指定 DNS server 直查结果 | `netutils dns-compare google.com --server 8.8.8.8` |
@@ -248,6 +248,23 @@ netutils dns example.com --doh cloudflare --no-proxy
 `--doh` 与 `--server` 互斥——两者分别是 HTTPS 和 UDP/53，同时给出会让结果无法归因。明文 `http://` endpoint 会被拒绝而不是静默接受：明文之上的 DoH 毫无隐私意义。
 
 由于 DoH 完全绕过操作系统 resolver，hosts 文件、VPN split-DNS 规则和系统 DNS 缓存都不生效。把 DoH 结果与 `netutils dns`、`netutils dns-compare` 对比，即可看出两条路径是否分歧。
+
+### DNS over TLS
+
+`dns --dot` 走 853 端口上的 DoT（RFC 7858），预设名与 DoH 相同：
+
+```bash
+netutils dns example.com --dot cloudflare
+netutils dns example.com --dot dns.example.net
+netutils dns example.com --dot dns.example.net:8853
+```
+
+输出包含协商出的 TLS 版本（用于确认查询确实被加密）和实际连接的服务器 IP。
+
+**必须给主机名**。DoT 会校验服务器证书，只给 IP 无法验证身份，因此 `--dot 1.1.1.1` 会被拒绝，而不是给出一个「已加密」但毫无意义的结果——请用预设名或 resolver 的主机名。
+
+DoT 不支持代理：它是 853 端口上的裸 TLS 流而非 HTTP，穿代理需要 CONNECT 隧道，内置 HTTP 客户端不参与这条链路。因此 `--proxy`/`--no-proxy` 与 `--dot` 同时给出会报用法错误（退出码 2）；需要观察代理侧 DNS 行为时请用 `--doh`。
+
 
 
 当你怀疑“本地 DNS 缓存/解析不对，但代理侧 DNS 可以访问”时，用 `proxy-test` 对比本地解析和代理域名请求：

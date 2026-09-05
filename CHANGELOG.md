@@ -15,11 +15,23 @@
   - 报文 ID 固定为 0，遵循 RFC 8484 关于 HTTP 缓存的建议
   - 输出 DNS 响应码、实际 endpoint、代理模式，并提示 DoH 完全绕过系统 resolver
   - JSON 输出带 `transport: "doh"` 字段，便于脚本区分链路
+- `dns` 支持 DoT（DNS over TLS，RFC 7858），与 DoH 一起覆盖完整的加密 DNS 传输
+  - `--dot <PRESET|HOST[:PORT]>`，预设与 DoH 同名，默认端口 853
+  - 沿用 RFC 1035 的 TCP 封装（2 字节大端长度前缀），复用 DoH 侧的报文编解码
+  - 输出协商出的 TLS 版本，用于确认查询确实被加密
+  - 拒绝纯 IP：DoT 依赖证书校验，只给 IP 无法验证服务器身份，那样的「加密」没有意义
+  - 明确不支持代理：DoT 是 853 端口上的裸 TLS 流，穿代理需要 CONNECT 隧道
+  - JSON 输出带 `transport: "dot"` 字段
 
 ### 变更
 - DoH 请求失败时展开错误的 source 链。`reqwest::Error` 的 Display 只给出
   「error sending request for url ...」，真正的原因（连接被拒、TLS 失败、超时）都在 source 里，
   对诊断工具而言等于没说
+
+### 修复
+- `dns --dot X --proxy Y` 此前能通过参数解析并**静默丢弃** `--proxy`：
+  clap 的 `--proxy requires doh` 规则在 `--dot` 同时出现时被冲突规则抵消。
+  现在显式拦下并以退出码 2 报用法错误，而不是让用户误以为查询走了代理
 
 ## [0.4.0] - 2026-09-05
 

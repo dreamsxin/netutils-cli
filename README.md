@@ -17,7 +17,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `route-get` | Show the actual route selected for a target and whether it uses TUN/VPN | `netutils route-get google.com` |
 | `proxy` | Proxy settings | `netutils proxy` |
 | `ping` | Ping host (ICMP/TCP) | `netutils ping google.com --count 4` |
-| `dns` | DNS query (UDP/53 or DoH) | `netutils dns example.com --type mx` |
+| `dns` | DNS query (UDP/53, DoH, or DoT) | `netutils dns example.com --type mx` |
 | `dns-cache` | Inspect or flush system DNS cache | `netutils dns-cache google.com` |
 | `dns-path` | Show DNS servers and the local route to each DNS server | `netutils dns-path google.com` |
 | `dns-compare` | Compare default resolution with direct queries to specific DNS servers | `netutils dns-compare google.com --server 8.8.8.8` |
@@ -203,6 +203,23 @@ The client is built on the same HTTP stack as the other commands, so `--proxy`, 
 `--doh` and `--server` are mutually exclusive because they use different transports — HTTPS versus UDP/53 — and reporting both at once would make the result impossible to attribute. Plaintext `http://` endpoints are refused rather than silently accepted, since DoH over cleartext provides no privacy at all.
 
 Because DoH bypasses the operating-system resolver, the hosts file, VPN split-DNS rules, and the system DNS cache do not apply. Compare the DoH answer with `netutils dns` and `netutils dns-compare` to see whether the two paths disagree.
+
+### DNS Over TLS
+
+`dns --dot` queries over DoT (RFC 7858) on port 853, using the same preset names:
+
+```bash
+netutils dns example.com --dot cloudflare
+netutils dns example.com --dot dns.example.net
+netutils dns example.com --dot dns.example.net:8853
+```
+
+The report includes the negotiated TLS version, which confirms the query was actually encrypted, and the server IP that was connected to.
+
+A hostname is required. DoT validates the server certificate, and an IP alone cannot be validated, so `--dot 1.1.1.1` is rejected rather than accepted with a meaningless "encrypted" result — use the preset or the resolver's hostname.
+
+DoT does not support proxies: it is a raw TLS stream on port 853, not HTTP, and traversing a proxy would require CONNECT tunneling that the built-in HTTP client does not provide. `--proxy` and `--no-proxy` therefore fail with a usage error when combined with `--dot`; use `--doh` when you need to observe proxy-side DNS behavior.
+
 
 
 When you suspect local DNS cache or local resolution is stale while proxy-side DNS may still work, use `proxy-test`:
@@ -453,6 +470,7 @@ netutils/
     ├── ping/mod.rs          # Ping (ICMP/TCP)
     ├── dns/mod.rs           # DNS query
     ├── doh.rs               # DNS over HTTPS client (RFC 8484)
+    ├── dot.rs               # DNS over TLS client (RFC 7858)
     ├── dns_cache.rs         # DNS cache inspection
     ├── dns_path.rs          # DNS server path inspection
     ├── dns_compare.rs       # DNS result comparison

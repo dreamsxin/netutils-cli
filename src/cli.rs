@@ -97,6 +97,9 @@ pub enum Commands {
         /// 通过 DoH 查询：预设名（cloudflare/google/quad9/adguard/alidns/dnspod）或 https:// URL
         #[arg(long, value_name = "PRESET|URL", conflicts_with = "server")]
         doh: Option<String>,
+        /// 通过 DoT 查询（853 端口）：预设名或 host[:port]；DoT 是裸 TLS，不支持代理
+        #[arg(long, value_name = "PRESET|HOST", conflicts_with_all = ["server", "doh"])]
+        dot: Option<String>,
         /// DoH 请求使用的代理（如 socks5h://127.0.0.1:1080）
         #[arg(long, requires = "doh")]
         proxy: Option<String>,
