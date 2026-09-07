@@ -1,6 +1,6 @@
 [package]
 name = "netutils-cli"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "Cross-platform network diagnostics toolkit: interfaces, routing, proxy, ping, DNS, TLS, HTTP, plugins, port scan, connectivity, and full-link diagnosis"
 license = "MIT"
@@ -35,6 +35,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "0.26"
 rustls-native-certs = "0.8"
 x509-parser = "0.18"
+# 用于计算插件二进制的 SHA-256；rustls 的 ring provider 已经把它编进依赖图，
+# 这里只是把它提升为直接依赖，不引入额外编译成本。
+ring = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

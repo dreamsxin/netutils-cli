@@ -2,6 +2,26 @@
 
 本文件记录 netutils-cli 的版本变更。
 
+## [0.6.0] - 2026-09-06
+
+### 新增
+- 插件安装收紧供应链假设，对齐 `gh extension` / `krew` 等现代插件体系的做法
+  - 默认传 `cargo install --locked`，使用 crate 发布时携带的 `Cargo.lock`。
+    此前每次安装都会重新解析传递依赖，同一条命令在不同时间可能装出不同的依赖树
+  - `install --version <REQ>` 可把安装钉在具体版本；此前只能无条件取最新版，
+    上游一旦发布被投毒的新版本会被直接安装
+  - `install --no-locked` 作为逃生阀：crate 未随包发布 `Cargo.lock` 时 `--locked` 会失败，
+    错误信息里会给出该提示
+  - `plugin-lock.json` 记录二进制的 SHA-256，`plugin list` 新增 `Integrity` 列，
+    可发现插件二进制被替换或改动（`ok` / `changed` / `unrecorded` / `unreadable` / `--`）
+  - 字段用 `#[serde(default)]` 兼容旧 lock：读到 `None` 只表示"未记录过"，
+    不会被误报成校验失败
+
+### 说明
+- 需要澄清此前一处不准确的表述：cargo 本身会用索引中的 `cksum` 校验下载的 `.crate`，
+  所以并非"完全没有完整性校验"。真正的缺口是**版本不受约束**、**依赖每次重解析**、
+  以及**安装后无法发现二进制被改动**——本次针对的是这三点
+
 ## [0.5.0] - 2026-09-05
 
 ### 新增

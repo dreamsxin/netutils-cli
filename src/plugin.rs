@@ -3,7 +3,7 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,6 +25,9 @@ struct PluginInfo {
     version: Option<String>,
     source: Option<String>,
     path: Option<String>,
+    /// 当前二进制与 plugin-lock.json 记录的 SHA-256 是否一致：
+    /// `ok` / `changed` / `unrecorded`（旧 lock 无哈希）/ `--`（未安装）
+    integrity: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -38,6 +41,12 @@ struct InstallInfo {
     source_value: Option<String>,
     lock_path: Option<String>,
     lock_error: Option<String>,
+    /// 安装后计算的二进制 SHA-256
+    binary_sha256: Option<String>,
+    /// 是否使用了 `cargo install --locked`
+    locked: bool,
+    /// 请求的版本约束（未指定时为 None，即安装最新版）
+    requested_version: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,6 +60,12 @@ struct PluginLock {
     installed_at_unix: u64,
     binary_path: String,
     core_version: String,
+    /// 安装时二进制的 SHA-256。
+    ///
+    /// `Option` 是为了兼容本字段引入之前写下的 lock 文件：读到 `None`
+    /// 只说明"没记录过"，不能当成"校验失败"。
+    #[serde(default)]
+    binary_sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,7 +154,20 @@ const KNOWN_PLUGINS: &[KnownPlugin] = &[
     },
 ];
 
-pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
+/// 安装插件。
+///
+/// 供应链上的三点收紧：
+/// - `--locked` 使用 crate 发布时携带的 `Cargo.lock`，传递依赖不再每次重解析
+/// - `version` 允许把安装钉在具体版本上，而不是无条件取最新
+/// - 记录二进制的 SHA-256，后续 `plugin list` 可以发现被替换或改动
+pub fn install(
+    name: &str,
+    path: Option<&str>,
+    force: bool,
+    version: Option<&str>,
+    no_locked: bool,
+    mode: OutputMode,
+) {
     let Some(plugin) = resolve_known_plugin(name) else {
         print_error(mode, &format!("unknown plugin: {name}"));
         return;
@@ -158,10 +186,15 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
     }
 
     let root = plugin_root(plugin.name);
+    let locked = !no_locked;
+    let version_request = version.map(str::to_string);
     let mut command = Command::new("cargo");
     command.arg("install");
     if force {
         command.arg("--force");
+    }
+    if locked {
+        command.arg("--locked");
     }
     command.arg("--root").arg(&root);
 
@@ -176,6 +209,9 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
         command.arg("--path").arg(path);
     } else {
         command.arg(plugin.crate_name);
+        if let Some(version) = version {
+            command.arg("--version").arg(version);
+        }
     }
 
     if mode == OutputMode::Table {
@@ -190,18 +226,20 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
     match command.status() {
         Ok(status) if status.success() => {
             let binary_path = installed_binary(plugin.name, plugin.binary);
-            let version = binary_path.as_ref().and_then(binary_version);
+            let installed_version = binary_path.as_ref().and_then(binary_version);
+            let binary_sha256 = binary_path.as_deref().and_then(file_sha256);
             let (lock_path, lock_error) = if let Some(binary_path) = &binary_path {
                 let lock = PluginLock {
                     name: plugin.name.to_string(),
                     binary: plugin.binary.to_string(),
                     crate_name: plugin.crate_name.to_string(),
-                    version: version.clone(),
+                    version: installed_version.clone(),
                     source: source.clone(),
                     source_value: source_value.clone(),
                     installed_at_unix: unix_now(),
                     binary_path: binary_path.display().to_string(),
                     core_version: env!("CARGO_PKG_VERSION").to_string(),
+                    binary_sha256: binary_sha256.clone(),
                 };
                 match write_plugin_lock(plugin.name, &lock) {
                     Ok(path) => (Some(path.display().to_string()), None),
@@ -213,6 +251,7 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
                     Some("installed binary was not found after cargo install".to_string()),
                 )
             };
+            let version = installed_version;
             let info = InstallInfo {
                 installed: true,
                 name: plugin.name.to_string(),
@@ -223,6 +262,9 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
                 source_value,
                 lock_path,
                 lock_error,
+                binary_sha256,
+                locked,
+                requested_version: version_request,
             };
             if mode == OutputMode::Json {
                 print_json(&info);
@@ -230,6 +272,17 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
                 println!("  {}", "installed".green());
                 if let Some(version) = &info.version {
                     println!("  version: {version}");
+                }
+                println!(
+                    "  dependency resolution: {}",
+                    if info.locked {
+                        "locked (Cargo.lock from the published crate)"
+                    } else {
+                        "unlocked (--no-locked)"
+                    }
+                );
+                if let Some(digest) = &info.binary_sha256 {
+                    println!("  sha256: {digest}");
                 }
                 if let Some(lock_path) = &info.lock_path {
                     println!("  lock: {lock_path}");
@@ -239,8 +292,49 @@ pub fn install(name: &str, path: Option<&str>, force: bool, mode: OutputMode) {
                 }
             }
         }
-        Ok(status) => print_error(mode, &format!("cargo install failed with status {status}")),
+        Ok(status) => {
+            // `--locked` 在 crate 未随包发布 Cargo.lock 时会直接失败，
+            // 这一提示避免用户误以为是网络或版本问题。
+            let hint = if locked {
+                "; if the crate ships no Cargo.lock, retry with --no-locked"
+            } else {
+                ""
+            };
+            print_error(
+                mode,
+                &format!("cargo install failed with status {status}{hint}"),
+            )
+        }
         Err(err) => print_error(mode, &format!("failed to run cargo install: {err}")),
+    }
+}
+
+/// 计算文件的 SHA-256，读不到时返回 None（不把"读不到"伪装成校验失败）。
+fn file_sha256(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+    Some(
+        digest
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+/// 对比当前二进制与 lock 中记录的 SHA-256。
+fn integrity_status(binary: Option<&Path>, lock: Option<&PluginLock>) -> String {
+    let Some(binary) = binary else {
+        return "--".to_string();
+    };
+    let Some(recorded) = lock.and_then(|lock| lock.binary_sha256.as_deref()) else {
+        // 旧版本写下的 lock 没有哈希字段，只能说"未记录"。
+        return "unrecorded".to_string();
+    };
+    match file_sha256(binary) {
+        Some(current) if current == recorded => "ok".to_string(),
+        Some(_) => "changed".to_string(),
+        None => "unreadable".to_string(),
     }
 }
 
@@ -251,6 +345,7 @@ pub fn list(mode: OutputMode) {
             let path = installed_binary(plugin.name, plugin.binary);
             let lock = read_plugin_lock(plugin.name);
             let status = plugin_status(path.is_some(), lock.is_some());
+            let integrity = integrity_status(path.as_deref(), lock.as_ref());
             PluginInfo {
                 name: plugin.name.to_string(),
                 binary: plugin.binary.to_string(),
@@ -270,6 +365,7 @@ pub fn list(mode: OutputMode) {
                         .unwrap_or(lock.source)
                 }),
                 path: path.map(|path| path.display().to_string()),
+                integrity,
             }
         })
         .collect::<Vec<_>>();
@@ -295,6 +391,12 @@ pub fn list(mode: OutputMode) {
                     plugin.version.clone().unwrap_or_else(|| "--".to_string()),
                     plugin.source.clone().unwrap_or_else(|| "--".to_string()),
                     plugin.path.clone().unwrap_or_else(|| "--".to_string()),
+                    match plugin.integrity.as_str() {
+                        "ok" => plugin.integrity.green().to_string(),
+                        "changed" => plugin.integrity.red().to_string(),
+                        "unreadable" => plugin.integrity.yellow().to_string(),
+                        _ => plugin.integrity.clone(),
+                    },
                 ]
             })
             .collect::<Vec<_>>();
@@ -310,6 +412,7 @@ pub fn list(mode: OutputMode) {
                 "Version",
                 "Source",
                 "Path",
+                "Integrity",
             ],
             &rows,
         );
@@ -320,15 +423,15 @@ pub fn update(name: &str, mode: OutputMode) {
     if name == "all" {
         update_all(mode);
     } else if let Some(plugin) = resolve_known_plugin(name) {
-        install(plugin.name, None, true, mode);
+        install(plugin.name, None, true, None, false, mode);
     } else {
-        install(name, None, true, mode);
+        install(name, None, true, None, false, mode);
     }
 }
 
 fn update_all(mode: OutputMode) {
     for plugin in KNOWN_PLUGINS {
-        install(plugin.name, None, true, mode);
+        install(plugin.name, None, true, None, false, mode);
     }
 }
 
@@ -1094,6 +1197,108 @@ fn print_error(mode: OutputMode, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_file(name: &str, contents: &[u8]) -> PathBuf {
+        let path = env::temp_dir().join(format!("netutils-plugin-test-{name}"));
+        fs::write(&path, contents).expect("failed to write temp file");
+        path
+    }
+
+    fn lock_with_hash(hash: Option<&str>) -> PluginLock {
+        PluginLock {
+            name: "mcp".to_string(),
+            binary: "netutils-mcp".to_string(),
+            crate_name: "netutils-plugin-mcp".to_string(),
+            version: Some("0.2.0".to_string()),
+            source: "registry".to_string(),
+            source_value: Some("netutils-plugin-mcp".to_string()),
+            installed_at_unix: 0,
+            binary_path: "/tmp/netutils-mcp".to_string(),
+            core_version: "0.5.0".to_string(),
+            binary_sha256: hash.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn sha256_matches_the_known_digest_of_empty_input() {
+        let path = temp_file("empty", b"");
+
+        assert_eq!(
+            file_sha256(&path).as_deref(),
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn sha256_is_none_for_a_missing_file() {
+        let missing = env::temp_dir().join("netutils-plugin-test-does-not-exist");
+        let _ = fs::remove_file(&missing);
+
+        assert_eq!(file_sha256(&missing), None);
+    }
+
+    #[test]
+    fn integrity_is_ok_when_the_digest_matches() {
+        let path = temp_file("match", b"binary");
+        let digest = file_sha256(&path).unwrap();
+
+        let status = integrity_status(Some(&path), Some(&lock_with_hash(Some(&digest))));
+
+        assert_eq!(status, "ok");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn integrity_is_changed_when_the_binary_differs() {
+        let path = temp_file("changed", b"tampered");
+
+        let status = integrity_status(Some(&path), Some(&lock_with_hash(Some("deadbeef"))));
+
+        assert_eq!(status, "changed");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn integrity_reports_unrecorded_for_locks_written_before_hashing_existed() {
+        let path = temp_file("unrecorded", b"binary");
+
+        let status = integrity_status(Some(&path), Some(&lock_with_hash(None)));
+
+        // 旧 lock 没有哈希字段，不能把"没记录过"当成"校验失败"
+        assert_eq!(status, "unrecorded");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn integrity_is_dash_when_nothing_is_installed() {
+        assert_eq!(
+            integrity_status(None, Some(&lock_with_hash(Some("deadbeef")))),
+            "--"
+        );
+        assert_eq!(integrity_status(None, None), "--");
+    }
+
+    #[test]
+    fn plugin_lock_without_hash_field_still_deserializes() {
+        // 兼容本字段引入之前写下的 plugin-lock.json
+        let json = r#"{
+            "name": "mcp",
+            "binary": "netutils-mcp",
+            "crate_name": "netutils-plugin-mcp",
+            "version": "0.1.4",
+            "source": "registry",
+            "source_value": "netutils-plugin-mcp",
+            "installed_at_unix": 1,
+            "binary_path": "/tmp/netutils-mcp",
+            "core_version": "0.3.22"
+        }"#;
+
+        let lock: PluginLock = serde_json::from_str(json).expect("legacy lock must parse");
+
+        assert_eq!(lock.binary_sha256, None);
+    }
 
     #[test]
     fn validates_plugin_names() {

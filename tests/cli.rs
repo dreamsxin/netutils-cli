@@ -254,6 +254,47 @@ fn dns_help_documents_dot() {
 }
 
 #[test]
+fn install_help_documents_supply_chain_flags() {
+    let output = netutils(&["install", "--help"]);
+
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("--version"), "stdout: {text}");
+    assert!(text.contains("--no-locked"), "stdout: {text}");
+}
+
+#[test]
+fn install_version_pin_conflicts_with_local_path() {
+    // --version 是 registry 语义，配 --path 无意义，属于用法错误
+    let output = netutils(&["install", "mcp", "--path", ".", "--version", "0.2.0"]);
+
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn plugin_list_reports_binary_integrity() {
+    let output = netutils(&["--json", "plugin", "list"]);
+
+    let text = stdout(&output);
+    assert!(text.contains("\"integrity\""), "stdout: {text}");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).expect("plugin list must emit valid JSON");
+    let entries = parsed.as_array().expect("plugin list must be an array");
+    for entry in entries {
+        let integrity = entry["integrity"]
+            .as_str()
+            .expect("integrity must be a string");
+        assert!(
+            matches!(
+                integrity,
+                "ok" | "changed" | "unrecorded" | "unreadable" | "--"
+            ),
+            "unexpected integrity value: {integrity}"
+        );
+    }
+}
+
+#[test]
 fn dot_conflicts_with_the_other_transports() {
     for conflicting in [["--server", "8.8.8.8"], ["--doh", "cloudflare"]] {
         let output = netutils(&[

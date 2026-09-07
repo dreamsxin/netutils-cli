@@ -383,7 +383,31 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` 会列出核心内置的已知插件。除非显式传入 `--path <插件 crate>`，`netutils install <name>` 始终从 crates.io 安装，不再自动查找相邻本地仓库。安装成功后会写入 `plugin-lock.json`。核心转发插件命令时还会在已选中目标系统代理时设置 `NETUTILS_EFFECTIVE_PROXY`。
+`plugin list` 会列出核心内置的已知插件，包含支持平台、当前主机是否支持、本地安装状态、版本、来源、二进制路径和完整性状态。除非显式传入 `--path <插件 crate>`，`netutils install <name>` 始终从 crates.io 安装，不再自动查找相邻本地仓库。安装成功后会写入 `plugin-lock.json`，其中记录来源、版本、二进制路径、二进制 SHA-256 和安装时的核心版本。核心转发插件命令时还会在已选中目标系统代理时设置 `NETUTILS_EFFECTIVE_PROXY`。
+
+### 插件供应链
+
+插件是独立 crate，安装时从源码构建，因此安装动作会在你的机器上执行它的 build script。这里有三处约束收紧了"安装能拉进来什么"：
+
+```bash
+# 把安装钉在具体版本，而不是无条件取最新
+netutils install mcp --version 0.2.0
+
+# 逃生阀：crate 未随包发布 Cargo.lock
+netutils install mcp --no-locked
+
+# 发现插件二进制在安装之后被改动
+netutils plugin list
+```
+
+默认使用 `cargo install --locked`，依赖树来自 crate 发布时携带的 `Cargo.lock`，而不是每次安装重新解析。没有它，同一条命令在不同时间可能装出不同的传递依赖。若 crate 未发布 lockfile，安装会失败，错误信息里会指向 `--no-locked`。
+
+`--version` 用于钉版本。不钉的话，`install` 取的是最新已发布版本——上游一旦发布被投毒的版本，会被直接装上。
+
+`plugin list` 的 `Integrity` 列把当前二进制与安装时记录的 SHA-256 对比：`ok`、`changed`、`unrecorded`（lock 早于该字段）、`unreadable`、`--`（未安装）。这是 trust-on-first-use：它能发现安装后的改动，但**不能**验证发布者身份。
+
+需要说明准确的边界：cargo 本身会用注册表索引中的校验和验证下载的 `.crate`，下载环节从来不是"未校验"的。这次补的是版本不受约束、依赖每次重解析、以及安装后无法察觉二进制变化这三个缺口。
+
 
 `path` 用于从本机视角拆解一次 HTTP/HTTPS 请求路径：DNS、代理模式、出口接口、快速 trace、TCP/TLS/HTTP 分阶段耗时。
 

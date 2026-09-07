@@ -188,9 +188,20 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await
             }
-            Some(Commands::Install { name, path, force }) => {
-                plugin::install(&name, path.as_deref(), force, mode)
-            }
+            Some(Commands::Install {
+                name,
+                path,
+                force,
+                version,
+                no_locked,
+            }) => plugin::install(
+                &name,
+                path.as_deref(),
+                force,
+                version.as_deref(),
+                no_locked,
+                mode,
+            ),
             Some(Commands::Plugin) => {
                 let cli = PluginCli::parse_from([OsString::from("netutils plugin")]);
                 run_plugin_command(cli.command, mode);

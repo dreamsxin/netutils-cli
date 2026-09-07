@@ -261,6 +261,12 @@ pub enum Commands {
         /// 强制重新安装
         #[arg(long)]
         force: bool,
+        /// 把安装钉在指定版本（如 0.2.0 或 ^0.2），仅对 registry 安装有效
+        #[arg(long, value_name = "REQ", conflicts_with = "path")]
+        version: Option<String>,
+        /// 不使用 crate 发布时携带的 Cargo.lock（默认使用，以获得可复现的依赖解析）
+        #[arg(long)]
+        no_locked: bool,
     },
 
     /// 插件管理

@@ -328,7 +328,31 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, and binary path. The current known plugins are `chrome-proxy`, `mcp`, `sse`, `subdomain`, and `ws`. Registry installation is always used unless `--path <plugin-crate>` is explicitly supplied. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, and core version used for installation. When dispatching a plugin command, the core also passes `NETUTILS_EFFECTIVE_PROXY` when a target-specific system proxy was selected.
+`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, binary path, and binary integrity. The current known plugins are `chrome-proxy`, `mcp`, `sse`, `subdomain`, and `ws`. Registry installation is always used unless `--path <plugin-crate>` is explicitly supplied. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, binary SHA-256, and core version used for installation. When dispatching a plugin command, the core also passes `NETUTILS_EFFECTIVE_PROXY` when a target-specific system proxy was selected.
+
+### Plugin Supply Chain
+
+Plugins are separate crates built from source at install time, so installing one runs its build scripts on your machine. Three constraints tighten what that install can pull in:
+
+```bash
+# Pin the install to an exact version instead of taking whatever is latest
+netutils install mcp --version 0.2.0
+
+# Escape hatch: the crate ships no Cargo.lock
+netutils install mcp --no-locked
+
+# Detect a plugin binary that changed since it was installed
+netutils plugin list
+```
+
+`cargo install --locked` is used by default, so the dependency tree comes from the `Cargo.lock` the crate published rather than being re-resolved on every install. Without it, the same command can produce different transitive dependencies at different times. If a crate ships no lockfile the install fails and the error points at `--no-locked`.
+
+`--version` pins the install. Without a pin, `install` takes the latest published version, so a compromised upstream release would be picked up automatically.
+
+`plugin list` reports an `Integrity` column by comparing the binary against the SHA-256 recorded at install time: `ok`, `changed`, `unrecorded` (the lock predates this field), `unreadable`, or `--` (not installed). This is trust-on-first-use — it detects drift after install, it does not authenticate the publisher.
+
+For accuracy: cargo already verifies the downloaded `.crate` against the checksum in the registry index, so the download itself was never unverified. The gaps addressed here are unconstrained versions, re-resolved dependencies, and no way to notice a binary changing after installation.
+
 
 `path` breaks down an HTTP/HTTPS request from the local host perspective: DNS, proxy mode, egress interface, quick trace, and staged TCP/TLS/HTTP timings.
 
