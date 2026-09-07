@@ -272,6 +272,53 @@ fn install_version_pin_conflicts_with_local_path() {
 }
 
 #[test]
+fn ping_help_documents_continuous_mode() {
+    let output = netutils(&["ping", "--help"]);
+
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("--interval"), "stdout: {text}");
+    assert!(text.contains("Ctrl-C"), "count=0 应在帮助里说明: {text}");
+}
+
+#[test]
+fn bounded_ping_still_emits_a_single_json_object() {
+    // 有界 --count 的 JSON 契约必须保持不变，否则会打断既有脚本
+    let output = netutils(&["--json", "ping", "127.0.0.1", "-c", "1", "--timeout", "1"]);
+
+    let text = stdout(&output);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).expect("bounded ping must emit one JSON object");
+    assert!(parsed["probes"].is_array(), "stdout: {text}");
+    assert!(parsed["stats"].is_object(), "stdout: {text}");
+}
+
+#[test]
+fn continuous_ping_streams_ndjson_per_probe() {
+    // count=0 不会自己结束，用总超时收口；每轮探测应当已经逐行输出
+    let output = netutils(&[
+        "--json",
+        "--total-timeout",
+        "2",
+        "ping",
+        "127.0.0.1",
+        "-c",
+        "0",
+        "--interval",
+        "1",
+        "--timeout",
+        "1",
+    ]);
+
+    let text = stdout(&output);
+    let first = text.lines().next().unwrap_or_default();
+    let probe: serde_json::Value =
+        serde_json::from_str(first).expect("each streamed line must be valid JSON");
+    assert!(probe["seq"].is_number(), "first line: {first}");
+    assert!(probe.get("success").is_some(), "first line: {first}");
+}
+
+#[test]
 fn plugin_list_reports_binary_integrity() {
     let output = netutils(&["--json", "plugin", "list"]);
 

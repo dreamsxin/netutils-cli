@@ -72,7 +72,7 @@ pub enum Commands {
     Ping {
         /// 目标主机名或 IP
         host: String,
-        /// 发送包数（默认 4）
+        /// 发送包数（默认 4，0 表示持续探测直到 Ctrl-C）
         #[arg(short, long, default_value_t = 4)]
         count: u32,
         /// 单次探测超时秒数（默认 2）
