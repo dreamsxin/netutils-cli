@@ -200,6 +200,9 @@ pub enum Commands {
         /// 连接超时秒数（默认 5）
         #[arg(long, default_value_t = 5)]
         timeout: u64,
+        /// 串行探测的间隔秒数（默认 1，0 表示不等待）
+        #[arg(long, default_value_t = 1)]
+        interval: u64,
         /// 显示分阶段耗时 (DNS/Connect/TLS/TTFB)，仅直连 HTTPS
         #[arg(long)]
         timing: bool,

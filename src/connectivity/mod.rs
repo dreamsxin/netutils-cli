@@ -59,6 +59,7 @@ pub async fn run(
     target: &str,
     count: u32,
     timeout: Duration,
+    interval: Duration,
     timing: bool,
     proxy: Option<String>,
     no_proxy: bool,
@@ -71,6 +72,7 @@ pub async fn run(
             target,
             count,
             timeout,
+            interval,
             timing,
             proxy,
             no_proxy,
@@ -80,7 +82,7 @@ pub async fn run(
         )
         .await;
     } else {
-        run_tcp(target, count, timeout, assertions, mode).await;
+        run_tcp(target, count, timeout, interval, assertions, mode).await;
     }
 }
 
@@ -194,6 +196,7 @@ async fn run_tcp(
     target: &str,
     count: u32,
     connect_timeout: Duration,
+    interval: Duration,
     assertions: &[Assertion],
     mode: OutputMode,
 ) {
@@ -282,7 +285,7 @@ async fn run_tcp(
         }
 
         if i + 1 < count {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(interval).await;
         }
     }
 
@@ -311,6 +314,7 @@ async fn run_http(
     url: &str,
     count: u32,
     connect_timeout: Duration,
+    interval: Duration,
     timing: bool,
     proxy: Option<String>,
     no_proxy: bool,
@@ -431,7 +435,7 @@ async fn run_http(
             }
 
             if i + 1 < count {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::time::sleep(interval).await;
             }
         }
     }
