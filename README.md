@@ -33,6 +33,7 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `ws` | Plugin command: test WebSocket handshake and messages | `netutils install ws && netutils ws wss://echo.websocket.events --message ping` |
 | `mcp` | Plugin command: test MCP Streamable HTTP initialization and tools list | `netutils install mcp && netutils mcp https://example.com/mcp` |
 | `subdomain` | Plugin command: passively discover subdomains from public sources | `netutils install subdomain && netutils subdomain example.com` |
+| `socks-probe` | Plugin command: SOCKS5 protocol-level probe (method negotiation, RFC 1929 auth, optional CONNECT) | `netutils install socks-probe && netutils socks-probe 127.0.0.1:1080` |
 | `chrome-proxy` | Plugin command: launch Chrome through a local chained proxy bridge | `netutils install chrome-proxy && netutils chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | One-click diagnostics | `netutils diag` |
@@ -298,6 +299,43 @@ netutils mcp https://example.com/mcp --protocol-version 2025-11-25 --listen
 
 `mcp` is provided by the external `netutils-mcp` plugin. The core CLI forwards `netutils mcp ...` to the installed plugin. The plugin performs `initialize`, captures `MCP-Session-Id`, sends `notifications/initialized`, and runs `tools/list` by default. It handles both `application/json` and `text/event-stream` responses; `--listen` additionally opens a GET server-to-client SSE stream.
 
+### SOCKS5 Protocol Probe
+
+`proxy-test` tells you whether a proxy works end to end, but when the handshake fails it cannot distinguish "the port is not speaking SOCKS5 at all", "SOCKS5 but rejects no-auth", and "SOCKS5 but the credentials are wrong". `socks-probe` reads and writes the exact byte sequences defined by RFC 1928 / RFC 1929 and classifies every failure into a stable verdict string:
+
+```bash
+netutils install socks-probe
+
+# Method negotiation only; observe 05 00 / 05 02 / 05 ff
+netutils socks-probe 127.0.0.1:1080
+
+# Complete RFC 1929 username/password auth (read the password from an env var to keep it out of shell history)
+netutils socks-probe proxy.example.com:1080 --user alice --pass 'env:PROXY_PASS'
+
+# After a successful handshake, run a CONNECT to verify end-to-end reachability
+netutils socks-probe proxy.example.com:1080 --user alice --pass s3cret --connect example.com:443
+
+# Machine-readable output
+netutils --json socks-probe 127.0.0.1:1080
+```
+
+Common verdicts:
+
+| verdict | Meaning |
+|---|---|
+| `socks5_no_auth_ready` | Server accepted no-auth; handshake succeeded |
+| `socks5_auth_ok` | Server required auth and accepted the credentials |
+| `socks5_auth_required` | Server replied `05 ff` or `05 02` but no credentials were supplied |
+| `socks5_auth_failed` | Server replied `01 01`; credentials rejected |
+| `socks5_no_acceptable_method` | Username/password was offered but still rejected (server may require GSSAPI or another method) |
+| `not_socks` | First byte is not `0x05`; the port is not speaking SOCKS5 |
+| `closed_before_reply` | TCP up but the peer closed immediately (typical when the port is open but the proxy process is unhealthy) |
+| `empty_reply` / `timeout` | Peer never answered; likely a whitelist drop |
+| `connection_refused` | Nothing listening on the port |
+| `socks5_connect_*` | Handshake succeeded but the CONNECT phase was refused / failed / malformed |
+
+Credentials are never echoed: the auth request appears as a length-only summary `<auth ver=01 user_len=N pass_len=M>` in both human and JSON output, and the password is never printed. Exit code `0` means the handshake (and optional CONNECT) succeeded, `1` means the probe completed with at least one failed phase, and `2` means a CLI usage error.
+
 Plugin management:
 
 ```bash
@@ -309,6 +347,7 @@ netutils install mcp
 netutils install sse
 netutils install ws
 netutils install subdomain
+netutils install socks-probe
 netutils install chrome-proxy
 netutils plugin new whois
 netutils plugin validate ./whois
@@ -328,7 +367,7 @@ netutils plugin new whois
 netutils plugin new whois --dir ./plugins --binary netutils-whois --crate netutils-plugin-whois
 ```
 
-`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, binary path, and binary integrity. The current known plugins are `chrome-proxy`, `mcp`, `sse`, `subdomain`, and `ws`. Registry installation is always used unless `--path <plugin-crate>` is explicitly supplied. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, binary SHA-256, and core version used for installation. When dispatching a plugin command, the core also passes `NETUTILS_EFFECTIVE_PROXY` when a target-specific system proxy was selected.
+`plugin list` shows the known plugins built into the core, which are the plugins currently installable with `netutils install <name>`, together with supported platforms, current-host support, local install status, version, source, binary path, and binary integrity. The current known plugins are `chrome-proxy`, `mcp`, `socks-probe`, `sse`, `subdomain`, and `ws`. Registry installation is always used unless `--path <plugin-crate>` is explicitly supplied. After a successful install, `netutils` writes `plugin-lock.json` under the plugin install directory. It records the source, version, binary path, binary SHA-256, and core version used for installation. When dispatching a plugin command, the core also passes `NETUTILS_EFFECTIVE_PROXY` when a target-specific system proxy was selected.
 
 ### Plugin Supply Chain
 

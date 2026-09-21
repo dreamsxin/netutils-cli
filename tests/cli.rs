@@ -159,7 +159,10 @@ fn plugin_list_runs_through_the_dedicated_parser() {
 
     // 未安装任何插件时仍应正常列出已知插件而非报参数错误。
     assert_ne!(output.status.code(), Some(2));
-    assert!(stdout(&output).contains("mcp"));
+    let text = stdout(&output);
+    assert!(text.contains("mcp"), "stdout: {text}");
+    // 新增插件必须被 KNOWN_PLUGINS 收录，否则 `netutils install socks-probe` 会报未知插件。
+    assert!(text.contains("socks-probe"), "stdout: {text}");
 }
 
 #[test]

@@ -33,6 +33,7 @@
 | `ws` | 插件命令：测试 WebSocket 握手和消息收发 | `netutils install ws && netutils ws wss://echo.websocket.events --message ping` |
 | `mcp` | 插件命令：测试 MCP Streamable HTTP 初始化和工具列表 | `netutils install mcp && netutils mcp https://example.com/mcp` |
 | `subdomain` | 插件命令：基于公开被动源发现子域名 | `netutils install subdomain && netutils subdomain example.com` |
+| `socks-probe` | 插件命令：SOCKS5 协议级探测（方法协商、RFC 1929 认证、可选 CONNECT） | `netutils install socks-probe && netutils socks-probe 127.0.0.1:1080` |
 | `chrome-proxy` | 插件命令：通过本地链式代理桥启动 Chrome 测试代理 | `netutils install chrome-proxy && netutils chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890` |
 | `connections` | 网络连接列表 (TCP/UDP) | `netutils connections --state LISTEN` |
 | `diag` | 一键诊断 | `netutils diag` |
@@ -353,6 +354,43 @@ netutils mcp https://example.com/mcp --tool search --args '{"query":"netutils"}'
 
 `--args` 必须是 JSON object，默认是 `{}`。`--require-tool` 会先检查 `tools/list` 中是否存在该工具，找不到则不执行 `tools/call`；如果使用 `--no-tools` 跳过工具列表，就不要同时使用 `--require-tool`。
 
+### SOCKS5 协议级探测
+
+`proxy-test` 能告诉你「代理能不能用」，但当代理握手失败时，它无法区分「端口根本不是 SOCKS5」、「是 SOCKS5 但拒绝无认证」、「是 SOCKS5 但凭据错误」这几种截然不同的场景。`socks-probe` 直接按 RFC 1928 / RFC 1929 定义的字节序列读写，把每一种失败都归到稳定的 verdict 字符串上：
+
+```bash
+netutils install socks-probe
+
+# 只做方法协商，观察 05 00 / 05 02 / 05 ff
+netutils socks-probe 127.0.0.1:1080
+
+# 完成 RFC 1929 用户名密码认证（密码走环境变量，避免落到 shell 历史）
+netutils socks-probe proxy.example.com:1080 --user alice --pass 'env:PROXY_PASS'
+
+# 认证成功后追加一次 CONNECT，验证代理到目标的端到端可达性
+netutils socks-probe proxy.example.com:1080 --user alice --pass s3cret --connect example.com:443
+
+# 机器可读输出
+netutils --json socks-probe 127.0.0.1:1080
+```
+
+常见 verdict：
+
+| verdict | 含义 |
+|---|---|
+| `socks5_no_auth_ready` | 服务器接受无认证，握手成功 |
+| `socks5_auth_ok` | 服务器要求认证，凭据被接受 |
+| `socks5_auth_required` | 服务器回复 `05 ff` 或 `05 02` 但未提供凭据 |
+| `socks5_auth_failed` | 服务器回复 `01 01`，凭据被拒绝 |
+| `socks5_no_acceptable_method` | 提供了用户名/密码仍被拒（服务器可能只支持 GSSAPI 等其他方法） |
+| `not_socks` | 首字节不是 `0x05`，端口上跑的不是 SOCKS5 |
+| `closed_before_reply` | TCP 建立后对端立即关闭（典型的"端口开着但代理进程异常"） |
+| `empty_reply` / `timeout` | 对端不响应，可能是白名单丢包 |
+| `connection_refused` | 端口无监听 |
+| `socks5_connect_*` | 握手成功但 CONNECT 阶段被拒（`refused`/`failed`/`malformed`） |
+
+凭据永不回显：认证请求在人类和 JSON 输出里都只以长度摘要 `<auth ver=01 user_len=N pass_len=M>` 呈现，密码永远不打印。退出码 `0` 表示握手（及可选 CONNECT）成功，`1` 表示探测完成但有阶段失败，`2` 表示 CLI 用法错误。
+
 插件管理：
 
 ```bash
@@ -364,6 +402,7 @@ netutils install mcp
 netutils install sse
 netutils install ws
 netutils install subdomain
+netutils install socks-probe
 netutils install chrome-proxy
 netutils plugin new whois
 netutils plugin validate ./whois

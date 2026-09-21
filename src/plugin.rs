@@ -135,6 +135,12 @@ const KNOWN_PLUGINS: &[KnownPlugin] = &[
         platforms: ALL_PLATFORMS,
     },
     KnownPlugin {
+        name: "socks-probe",
+        binary: "netutils-socks-probe",
+        crate_name: "netutils-plugin-socks-probe",
+        platforms: ALL_PLATFORMS,
+    },
+    KnownPlugin {
         name: "sse",
         binary: "netutils-sse",
         crate_name: "netutils-plugin-sse",
@@ -846,6 +852,9 @@ fn plugin_target_arg(args: &[OsString]) -> Option<String> {
         "--max-messages",
         "--max-seconds",
         "--message",
+        "--user",
+        "--pass",
+        "--connect",
     ];
     let mut skip_value = false;
     for arg in args {
