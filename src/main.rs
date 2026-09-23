@@ -26,6 +26,7 @@ mod proxy_test;
 mod route_get;
 mod route_probe;
 mod table;
+mod timestamp;
 mod tls_probe;
 mod traceroute;
 mod util;

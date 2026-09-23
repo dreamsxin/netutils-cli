@@ -34,7 +34,11 @@ pub async fn run(mode: OutputMode) {
 
     if mode == OutputMode::Table {
         println!();
-        println!("{}  {}", t("diag.title").bold(), current_timestamp().cyan());
+        println!(
+            "{}  {}",
+            t("diag.title").bold(),
+            crate::timestamp::now_display().cyan()
+        );
         println!();
         println!("  {}...", t("diag.running").dimmed());
     }
@@ -71,7 +75,7 @@ pub async fn run(mode: OutputMode) {
     }
 
     let elapsed = start.elapsed();
-    let timestamp = current_timestamp();
+    let timestamp = crate::timestamp::now_display();
 
     let report = DiagReport {
         timestamp: timestamp.clone(),
@@ -393,57 +397,4 @@ async fn check_dns_leak() -> DiagItem {
             message: t("diag.dns_leak_none"),
         }
     }
-}
-
-/// 获取当前时间戳
-fn current_timestamp() -> String {
-    // 简单时间戳，不依赖 chrono
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    let days = secs / 86400;
-    let hour = (secs % 86400) / 3600;
-    let min = (secs % 3600) / 60;
-    let sec = secs % 60;
-    // 粗略日期（从 1970-01-01 起）
-    let (year, month, day) = days_to_date(days as i64);
-    format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-        year, month, day, hour, min, sec
-    )
-}
-
-/// 天数转日期（从 1970-01-01）
-fn days_to_date(days: i64) -> (i64, u32, u32) {
-    let mut year = 1970i64;
-    let mut remaining = days;
-
-    loop {
-        let days_in_year = if is_leap(year) { 366 } else { 365 };
-        if remaining < days_in_year {
-            break;
-        }
-        remaining -= days_in_year;
-        year += 1;
-    }
-
-    let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mut month = 1u32;
-    let mut day = remaining as u32 + 1;
-
-    for (i, &md) in month_days.iter().enumerate() {
-        let md = if i == 1 && is_leap(year) { 29 } else { md };
-        if day <= md {
-            month = (i + 1) as u32;
-            break;
-        }
-        day -= md;
-    }
-
-    (year, month, day)
-}
-
-fn is_leap(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
