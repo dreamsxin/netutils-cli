@@ -61,10 +61,133 @@ pub struct ScanOutput {
     pub total_scanned: usize,
     pub open_count: usize,
     pub results: Vec<PortResult>,
+    /// 主机本身无法扫描时的原因（如解析失败）；正常扫描时不出现
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 批量扫描结果。独立类型，单主机的 JSON 结构因此不会被批量改动波及。
+#[derive(Serialize)]
+pub struct ScanBatchOutput {
+    pub mode: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub stats: ScanBatchStats,
+    pub results: Vec<ScanOutput>,
+}
+
+#[derive(Serialize)]
+pub struct ScanBatchStats {
+    pub hosts: usize,
+    pub with_open: usize,
+    pub without_open: usize,
 }
 
 /// 执行端口扫描并输出结果
 pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: OutputMode) {
+    match probe_host(host, ports, concurrency).await {
+        Ok(output) => render(&output, concurrency, mode),
+        Err(msg) => report_host_error(&msg, mode),
+    }
+}
+
+/// 批量扫描：串行跑完清单里的每台主机，共用同一份端口集合。
+pub async fn run_batch(
+    hosts: &[String],
+    ports: Option<&[u16]>,
+    concurrency: usize,
+    mode: OutputMode,
+) {
+    let started_at = crate::timestamp::now_rfc3339_millis();
+    let total = hosts.len();
+
+    if mode == OutputMode::Table {
+        println!();
+        println!("{}", t1("scan.batch_title", &total.to_string()).bold());
+    }
+
+    let mut results = Vec::with_capacity(total);
+    for (i, host) in hosts.iter().enumerate() {
+        // 分段标识带序号：长清单跑到一半时要能看出进行到哪台主机了
+        if mode == OutputMode::Table {
+            println!();
+            println!("  [{}/{}] {}", i + 1, total, host.bold());
+        }
+
+        match probe_host(host, ports, concurrency).await {
+            Ok(output) => {
+                if mode == OutputMode::Table {
+                    render(&output, concurrency, mode);
+                }
+                results.push(output);
+            }
+            // 解析失败的主机也要占一个结果位，否则结果数与清单行数对不上
+            Err(msg) => {
+                crate::output::mark_failure();
+                if mode == OutputMode::Table {
+                    println!("  {}", msg.red());
+                }
+                results.push(failed_output(host, msg));
+            }
+        }
+    }
+
+    let with_open = results.iter().filter(|o| o.open_count > 0).count();
+    let output = ScanBatchOutput {
+        mode: "batch".to_string(),
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
+        stats: ScanBatchStats {
+            hosts: total,
+            with_open,
+            without_open: total - with_open,
+        },
+        results,
+    };
+
+    if mode == OutputMode::Json {
+        print_json(&output);
+        return;
+    }
+
+    println!();
+    println!(
+        "  {}",
+        t1("scan.batch_summary", &total.to_string())
+            .replace("{1}", &with_open.to_string())
+            .bold()
+    );
+}
+
+/// 解析失败的主机的占位结果。
+fn failed_output(host: &str, error: String) -> ScanOutput {
+    ScanOutput {
+        host: host.to_string(),
+        target: String::new(),
+        started_at: crate::timestamp::now_rfc3339_millis(),
+        finished_at: crate::timestamp::now_rfc3339_millis(),
+        total_scanned: 0,
+        open_count: 0,
+        results: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn report_host_error(msg: &str, mode: OutputMode) {
+    crate::output::mark_failure();
+    if mode == OutputMode::Json {
+        print_json_error(msg);
+    } else {
+        println!("  {}", msg.red());
+    }
+}
+
+/// 扫描单台主机：只探测，不渲染。解析失败时返回 `Err(消息)`。
+async fn probe_host(
+    host: &str,
+    ports: Option<&[u16]>,
+    concurrency: usize,
+) -> Result<ScanOutput, String> {
     let concurrency = concurrency.max(1);
     // 扫描窗口从解析之前开始算：多 A 记录域名的解析本身可能是耗时的一段，
     // 把它排除在外会让 started_at 与实际命令起点脱节。
@@ -73,14 +196,7 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     // 解析主机；多 A 记录域名对每个端口尝试多个候选 IP，避免单个后端异常导致误判。
     let targets = crate::util::resolve_host_all(host).await;
     if targets.is_empty() {
-        let msg = t1("scan.resolve_fail", host);
-        crate::output::mark_failure();
-        if mode == OutputMode::Json {
-            print_json_error(&msg);
-        } else {
-            println!("  {}", msg.red());
-        }
-        return;
+        return Err(t1("scan.resolve_fail", host));
     }
     let target_label = targets
         .iter()
@@ -116,36 +232,40 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     results.sort_by_key(|r| r.port);
 
     let open_count = results.iter().filter(|r| r.open).count();
-    let output = ScanOutput {
+    Ok(ScanOutput {
         host: host.to_string(),
-        target: target_label.clone(),
+        target: target_label,
         started_at,
         finished_at: crate::timestamp::now_rfc3339_millis(),
         total_scanned: results.len(),
         open_count,
-        results: results.clone(),
-    };
+        results,
+        error: None,
+    })
+}
 
+/// 渲染扫描结果。
+fn render(output: &ScanOutput, concurrency: usize, mode: OutputMode) {
     if mode == OutputMode::Json {
-        print_json(&output);
+        print_json(output);
         return;
     }
 
     // 表格输出
     println!();
-    println!("{}", t1("scan.title", host).bold());
-    println!("  {}", t2("scan.target", host, &target_label));
+    println!("{}", t1("scan.title", &output.host).bold());
+    println!("  {}", t2("scan.target", &output.host, &output.target));
     println!(
         "  {}",
         t2(
             "scan.info",
-            &port_list.len().to_string(),
+            &output.total_scanned.to_string(),
             &concurrency.to_string()
         )
     );
     println!();
 
-    let open: Vec<&PortResult> = results.iter().filter(|r| r.open).collect();
+    let open: Vec<&PortResult> = output.results.iter().filter(|r| r.open).collect();
 
     if open.is_empty() {
         println!("  {}", t("scan.no_open").yellow());
@@ -179,8 +299,8 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
         "  {}",
         t2(
             "scan.done",
-            &open_count.to_string(),
-            &results.len().to_string()
+            &output.open_count.to_string(),
+            &output.total_scanned.to_string()
         )
     );
 }

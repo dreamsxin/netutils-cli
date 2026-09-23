@@ -295,6 +295,21 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         ("scan.port", "端口", "Port"),
         ("scan.state", "状态", "State"),
         ("scan.service", "服务", "Service"),
+        (
+            "scan.batch_title",
+            "🔍 批量端口扫描: {0} 台主机",
+            "🔍 Port-scan sweep: {0} hosts",
+        ),
+        (
+            "scan.batch_summary",
+            "共 {0} 台主机，{1} 台有开放端口",
+            "{0} hosts, {1} with open ports",
+        ),
+        (
+            "scan.host_missing",
+            "❌ 需要一个主机，或用 --targets-from 指定清单",
+            "❌ Provide a host, or a list via --targets-from",
+        ),
         // ── check ──
         ("check.title", "🔌 连通性测试: {0}", "🔌 Connectivity: {0}"),
         (

@@ -180,10 +180,23 @@ pub enum Commands {
     /// 端口扫描（并发 TCP connect）
     #[command(alias = "s")]
     Scan {
-        /// 目标主机名或 IP
-        host: String,
+        /// 目标主机名或 IP；与 --targets-from 互斥
+        host: Option<String>,
         /// 端口列表，逗号分隔（如 80,443,8080），不指定则扫描常见端口
+        ///
+        /// 批量模式下用不了这个位置参数（clap 会把它当成主机），请改用 -p
         ports: Option<String>,
+        /// 端口列表；与位置参数 PORTS 等价，批量模式下必须用它
+        #[arg(
+            short = 'p',
+            long = "ports",
+            value_name = "LIST",
+            conflicts_with = "ports"
+        )]
+        ports_flag: Option<String>,
+        /// 从文件读取主机清单，每行一个；`-` 表示标准输入
+        #[arg(long, value_name = "FILE|-", conflicts_with = "host")]
+        targets_from: Option<String>,
         /// 并发数（默认 100）
         #[arg(long, default_value_t = 100)]
         concurrency: usize,

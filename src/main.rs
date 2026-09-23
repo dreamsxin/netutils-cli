@@ -125,14 +125,42 @@ async fn main() -> anyhow::Result<()> {
             Some(Commands::Scan {
                 host,
                 ports,
+                ports_flag,
+                targets_from,
                 concurrency,
             }) => {
+                // 位置参数与 -p 等价。批量模式下只有 -p 可用：两个位置参数
+                // 在 host 变成可选后，clap 会把端口串填进 host。
+                let ports = ports.or(ports_flag);
                 let port_list = ports.as_ref().map(|s| util::parse_ports(s));
                 let port_ref = port_list
                     .as_ref()
                     .filter(|v| !v.is_empty())
                     .map(|v| v.as_slice());
-                portscan::run(&host, port_ref, concurrency, mode).await
+
+                let hosts = match (host, targets_from) {
+                    (Some(one), _) => Some(vec![one]),
+                    (None, Some(spec)) => match targets::load_targets(&spec) {
+                        Ok(list) => Some(list),
+                        Err(msg) => {
+                            report_usage_error(&msg, mode);
+                            None
+                        }
+                    },
+                    (None, None) => {
+                        report_usage_error(&i18n::t("scan.host_missing"), mode);
+                        None
+                    }
+                };
+                let Some(hosts) = hosts else {
+                    return;
+                };
+
+                if let [single] = hosts.as_slice() {
+                    portscan::run(single, port_ref, concurrency, mode).await
+                } else {
+                    portscan::run_batch(&hosts, port_ref, concurrency, mode).await
+                }
             }
             Some(Commands::Check {
                 target,

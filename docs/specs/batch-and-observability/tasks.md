@@ -54,7 +54,7 @@
   - 验收：`load_targets` 单测覆盖注释/空行/CRLF/BOM/全注释报错/不存在路径报错/重复保留/保序；3 行清单 `--json` 的 `results` 与清单同序；单个格式错误目标不中断整批；无参与双给均为退出码 2；部分失败退出码 1、断言失败 3
   - 需求：R1 R2 R7 R8 R9 R12
 
-- [ ] **T5 拆分 `portscan` + `scan --targets-from`**
+- [x] **T5 拆分 `portscan` + `scan --targets-from`**
   - 文件：`src/portscan/mod.rs`、`src/cli.rs`、`src/main.rs`
   - 内容：拆出 `probe_host(...) -> ScanOutput` 与 `render(...)`（同样先采基线：`scan 127.0.0.1 80,443`）；`scan.host` 改 `Option<String>`；新增 `-p/--ports`（与位置参数 `PORTS` 互斥）——**没有它批量模式就无法传端口**，clap 会把端口串当成第一个位置参数；复用 `load_targets` 做串行批量
   - 验收：基线 `diff` 为空；`scan --targets-from f 80` 报互斥错误而非把 `80` 当主机；清单内每台主机用同一份端口集合
