@@ -41,7 +41,9 @@
 
 - [ ] **T3 拆分 `connectivity` 并补 `check` 的时间戳**
   - 文件：`src/connectivity/mod.rs`
-  - 内容：先采基线（见下），再拆出 `probe_one(...) -> CheckOutput`（含 `mark_failure` 与断言评估，属逐目标语义）与 `render(&CheckOutput, OutputMode)`；`run()` 对外签名与行为不变，改为两者组合；`finish()` 的三重职责随之解开。同时补 `CheckProbe.ts` 与 `CheckOutput.started_at` / `finished_at`
+  - 内容：先采基线（见下），再拆出 `probe_one(..., mode) -> Option<CheckOutput>` 与 `render(&CheckOutput, OutputMode, concurrency)`；`run()` 对外签名与行为不变，改为两者组合；`finish()` 那个「返回 bool 表示是否已打印」的三重职责签名解开为纯 `finalize()`。同时补 `CheckProbe.ts` 与 `CheckOutput.started_at` / `finished_at`
+  - **探测循环内的逐次实时输出留在 `probe_one` 里**，不挪到渲染阶段：那是探测过程的一部分，挪走会变成「全部探完再一次性刷屏」，违反 R9 的实时要求。`mode` 因此仍是 `probe_one` 的参数。`Option` 的 `None` 表示目标格式错误已就地报错，错误结果的结构化表示留给 T4
+
   - 基线方式：用当前 HEAD 构建的二进制对 `check 127.0.0.1:9`（拒绝，确定性，且不依赖外网）采表格与 JSON 两份输出，`jq` 把 `rtt_ms` / `ts` / `started_at` / `finished_at` 置空；拆分后重采，`diff` 必须为空
   - 验收：基线 `diff` 为空；三道门通过
   - 需求：R4 R5 R7
@@ -60,9 +62,9 @@
 
 - [ ] **T6 `--parallel`**
   - 文件：新增 `src/batch.rs`；改 `src/cli.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`
-  - 内容：`run_targets(targets, parallel, run_one)`，`Semaphore` + `JoinSet`，按索引回填保序；共享输入用 `Arc`（`JoinSet` 要求 `'static`）；独立任务监听 Ctrl-C 只置 `AtomicBool`，派发前检查，**不用 `select!` 取消在飞任务**；表格模式 `--parallel > 1` 时按目标缓冲输出
-  - 验收：`run_targets` 单测（乱序完成时间下结果仍按输入序；同时在飞数不超过 N）；`--parallel > 1` 时每个目标内部仍遵守 `--interval`（回归测试，`--concurrency > 1` 已有绕过 `--interval` 的先例，不能重犯）；Ctrl-C 后输出已完成部分且退出码非 0
-  - 需求：R3 R11
+  - 内容：`run_targets(targets, parallel, run_one)`，`Semaphore` + `JoinSet`，按索引回填保序；共享输入用 `Arc`（`JoinSet` 要求 `'static`）；独立任务监听 Ctrl-C 只置 `AtomicBool`，派发前检查，**不用 `select!` 取消在飞任务**；表格模式 `--parallel > 1` 时抑制单目标内部逐次行，改为**每个目标完成即打印一行**带完成计数器与目标名的结果（**不缓冲**，见 design §1.4）
+  - 验收：`run_targets` 单测（乱序完成时间下结果仍按输入序；同时在飞数不超过 N）；`--parallel > 1` 时每个目标内部仍遵守 `--interval`（回归测试，`--concurrency > 1` 已有绕过 `--interval` 的先例，不能重犯）；并发跑多目标时输出随完成即时出现，不是结束才一次性刷出；Ctrl-C 后已完成部分已在屏幕上且退出码非 0
+  - 需求：R3 R9 R9b R11
 
 - [ ] **T7 `--ndjson`**
   - 文件：`src/output.rs`、`src/ping/mod.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`、`src/cli.rs`、`src/main.rs`
