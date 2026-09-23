@@ -3,4 +3,7 @@
 # release workflow 的打包产物与插件仓的临时 checkout
 /dist
 /.plugins-src
-
+# 打包步骤把归档与校验和写在仓库根目录
+/netutils-v*.tar.gz
+/netutils-v*.zip
+/netutils-v*.sha256

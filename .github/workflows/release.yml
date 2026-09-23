@@ -9,32 +9,93 @@ on:
   # 因此新加的 workflow 对已有标签不生效。
   workflow_dispatch:
 
+# 同一时刻只允许一次发布。键必须与触发方式无关：tag 触发的 github.ref 是
+# refs/tags/v*，手动触发是 refs/heads/main，用 github.ref 做键恰好互斥不了
+# 「标签触发 + 手动补救并行」这一主场景，两次运行会并发 upload --clobber
+# 同名资产，留下归档与校验和不配对的 Release。
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # 插件仓是独立仓库，版本号与本仓不对齐（插件 0.2.x / 主程序 0.6.x），
+  # 没有可直接复用的同名标签，所以这里只能给分支名。resolve 会把它解析成
+  # 具体 commit 再下发，保证同一次发布里三个平台的插件来自同一份源码。
+  PLUGINS_REF: main
+
 jobs:
-  publish:
+  # 单一解析点：版本号、本仓提交、插件仓提交都在这里定下来，后续 job 只消费，
+  # 避免各 job 各自解析出不一致的结果。
+  resolve:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      plugins_sha: ${{ steps.plugins.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 手动触发时检出的是分支，需要标签才能解析 v<version>
+          fetch-depth: 0
       # rustup 读取 rust-toolchain.toml 安装固定版本
       - run: rustup show active-toolchain
 
       # 版本号以 Cargo.toml 为唯一来源；由标签触发时再断言标签与之一致，
       # 避免发出与标签不符的版本。
-      - name: Resolve version
+      #
+      # 两条触发路径都必须构建**标签所指提交**：手动触发时检出的是分支 HEAD，
+      # 不锚定标签就会把分支最新代码当作该版本发出去。
+      - name: Resolve version and commit
         id: version
         run: |
           set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            tag_version="${GITHUB_REF_NAME#v}"
-            if [ "$version" != "$tag_version" ]; then
-              echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
-              exit 1
-            fi
+          tag="v${version}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "$tag" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${version}" >&2
+            exit 1
           fi
+          # 标签缺失必须在这里就失败：否则 crate 已经推上 crates.io，
+          # 等到 `gh release create --verify-tag` 才报错，留下半成品状态。
+          sha="$(git rev-parse --verify "${tag}^{commit}")"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "publishing version ${version}"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "releasing ${tag} at ${sha}"
+
+      # 把浮动的分支名钉成 commit，三个平台的 bundle 才会取到同一份插件源码
+      - name: Pin the plugins repo commit
+        id: plugins
+        run: |
+          set -euo pipefail
+          repo=https://github.com/dreamsxin/netutils-plugins.git
+          # PLUGINS_REF 允许是分支、标签或直接一个 commit：文档建议为了可复现
+          # 把它改成具体 commit，若这里只查 refs/heads 就会把更严格的配置
+          # 变成硬失败。
+          sha="$(git ls-remote "$repo" "refs/heads/${PLUGINS_REF}" | cut -f1)"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote "$repo" "refs/tags/${PLUGINS_REF}^{}" | cut -f1)"
+          fi
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote "$repo" "refs/tags/${PLUGINS_REF}" | cut -f1)"
+          fi
+          if [ -z "$sha" ] && printf '%s' "${PLUGINS_REF}" | grep -Eq '^[0-9a-f]{40}$'; then
+            sha="${PLUGINS_REF}"
+          fi
+          if [ -z "$sha" ]; then
+            echo "cannot resolve ${PLUGINS_REF} in the plugins repo" >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "plugins pinned at ${sha}"
+
+  publish:
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - run: rustup show active-toolchain
 
       # 重跑阻塞门：标签可能指向一个从未通过 CI 的提交
       - run: cargo fmt --check
@@ -51,7 +112,7 @@ jobs:
         run: |
           set -euo pipefail
           crate=netutils-cli
-          version="${{ steps.version.outputs.version }}"
+          version="${{ needs.resolve.outputs.version }}"
           index_url="https://index.crates.io/${crate:0:2}/${crate:2:2}/${crate}"
           if curl -sf "$index_url" | grep -q "\"vers\":\"${version}\""; then
             echo "${crate} ${version} is already on crates.io, skipping"
@@ -61,26 +122,31 @@ jobs:
 
   # 先把 Release 创建出来，再由 bundle 的三个并行任务往上传附件。
   # 如果让每个矩阵分支自己 `gh release create`，三者会撞在一起。
+  #
+  # 建成 draft：bundle 是 fail-fast: false，任一平台构建或上传失败时，
+  # 正式 Release 会留下一个附件缺失的版本供人下载。全部成功后由
+  # finalize-release 转正。
   create-release:
-    needs: publish
+    needs: [resolve, publish]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Ensure the GitHub Release exists
+      - name: Ensure the draft release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="v${{ needs.publish.outputs.version }}"
+          tag="v${{ needs.resolve.outputs.version }}"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "release ${tag} already exists"
             exit 0
           fi
+          notes="netutils ${tag} — 主程序与全部插件的预编译包。解压后把 NETUTILS_PLUGIN_DIR 指向包内 plugins/ 目录即可使用插件子命令。"
+          notes="${notes}"$'\n\n'"插件源码：dreamsxin/netutils-plugins@${{ needs.resolve.outputs.plugins_sha }}"
           # --verify-tag：宁可失败也不要凭空造一个标签出来
-          gh release create "$tag" --verify-tag --title "$tag" \
-            --notes "netutils ${tag} — 主程序与全部插件的预编译包。解压后把 NETUTILS_PLUGIN_DIR 指向包内 plugins/ 目录即可使用插件子命令。"
+          gh release create "$tag" --draft --verify-tag --title "$tag" --notes "$notes"
 
   # 二进制分发：主程序 + 全部插件装进同一个归档。
   #
@@ -88,7 +154,7 @@ jobs:
   # 不参与主程序链接，所以这里只要把它们按 `<plugins>/<插件名>/bin/<二进制名>`
   # 摆好，解压后设置 NETUTILS_PLUGIN_DIR 就能被发现，无需 `cargo install`。
   bundle:
-    needs: [publish, create-release]
+    needs: [resolve, create-release]
     permissions:
       contents: write
     strategy:
@@ -109,18 +175,15 @@ jobs:
       run:
         # Windows 上也走 bash，打包脚本才能三个平台共用一份
         shell: bash
-    env:
-      # 插件仓是独立仓库，版本号与本仓不对齐（插件 0.2.x / 主程序 0.6.x），
-      # 没有可直接复用的同名标签，因此默认取默认分支。
-      # 需要完全可复现的发布时，把它改成具体 commit 或标签。
-      PLUGINS_REF: main
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
       - name: Checkout plugins repo
         uses: actions/checkout@v4
         with:
           repository: dreamsxin/netutils-plugins
-          ref: ${{ env.PLUGINS_REF }}
+          ref: ${{ needs.resolve.outputs.plugins_sha }}
           path: .plugins-src
       # rustup 读取各自的 rust-toolchain.toml（两仓都固定 1.98.1）
       - run: rustup show active-toolchain
@@ -138,7 +201,7 @@ jobs:
         id: stage
         run: |
           set -euo pipefail
-          version="${{ needs.publish.outputs.version }}"
+          version="${{ needs.resolve.outputs.version }}"
           target="${{ matrix.target }}"
           name="netutils-v${version}-${target}"
           ext=""
@@ -151,23 +214,31 @@ jobs:
           mkdir -p "${stage}/plugins"
           cp "target/${target}/release/netutils${ext}" "${stage}/"
 
-          # `<插件目录>:<二进制名>`。ws 插件提供两个二进制，websocket 与 ws
-          # 共用同一个插件目录，这与 `external_command_target()` 的映射一致。
-          for entry in \
-            chrome-proxy:netutils-chrome-proxy \
-            mcp:netutils-mcp \
-            socks-probe:netutils-socks-probe \
-            sse:netutils-sse \
-            subdomain:netutils-subdomain \
-            ws:netutils-ws \
-            ws:netutils-websocket
-          do
-            plugin="${entry%%:*}"
-            bin="${entry##*:}"
+          # 插件清单从插件仓的 workspace 推导，不在这里手写一份：手写列表漏掉
+          # 新插件时打包只会静默少一个二进制，workflow 仍然是绿的。
+          #
+          # 目录名取自 crate 名而非 bin 名，所以 ws 包的两个 bin
+          # （netutils-ws / netutils-websocket）会自动落进同一个 ws/ 目录，
+          # 与 `external_command_target()` 的别名映射一致。
+          entries="$(cd .plugins-src && cargo metadata --no-deps --format-version 1 | jq -r '
+            .packages[]
+            | select(.name | startswith("netutils-plugin-"))
+            | select(.name != "netutils-plugin-sdk")
+            | (.name | ltrimstr("netutils-plugin-")) as $dir
+            | .targets[]
+            | select(.kind | index("bin"))
+            | "\($dir):\(.name)"')"
+          if [ -z "$entries" ]; then
+            echo "no plugin binaries derived from the plugins workspace" >&2
+            exit 1
+          fi
+          echo "bundling plugin binaries:"
+          echo "$entries"
+          while IFS=: read -r plugin bin; do
             mkdir -p "${stage}/plugins/${plugin}/bin"
             cp ".plugins-src/target/${target}/release/${bin}${ext}" \
                "${stage}/plugins/${plugin}/bin/"
-          done
+          done <<< "$entries"
 
           for doc in README.md LICENSE; do
             if [ -f "$doc" ]; then
@@ -200,6 +271,23 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          tag="v${{ needs.publish.outputs.version }}"
+          tag="v${{ needs.resolve.outputs.version }}"
           archive="${{ steps.stage.outputs.archive }}"
           gh release upload "$tag" "$archive" "${archive}.sha256" --clobber
+
+  # 只有 bundle 的三个分支全部成功才转正；任一平台失败时 Release 保持 draft，
+  # 不会对外露出一个附件缺失的版本。
+  finalize-release:
+    needs: [resolve, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.resolve.outputs.version }}"
+          gh release edit "$tag" --draft=false

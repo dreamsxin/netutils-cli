@@ -89,6 +89,8 @@ export NETUTILS_PLUGIN_DIR="$PWD/plugins"
 
 ```powershell
 # Windows
+Expand-Archive netutils-v0.6.0-x86_64-pc-windows-msvc.zip -DestinationPath .
+cd netutils-v0.6.0-x86_64-pc-windows-msvc
 $env:NETUTILS_PLUGIN_DIR = "$PWD\plugins"
 .\netutils.exe socks-probe 127.0.0.1:1080
 ```
@@ -96,7 +98,6 @@ $env:NETUTILS_PLUGIN_DIR = "$PWD\plugins"
 Without `NETUTILS_PLUGIN_DIR`, the plugin directory defaults to `%USERPROFILE%\.netutils\plugins` (`$HOME/.netutils/plugins` on Unix), which is where `netutils install` puts things. Bundled plugins carry no `plugin-lock.json`, so `netutils plugin list` reports their integrity as `unrecorded` — expected, since the archive checksum takes that role here.
 
 ### Quick Start
-
 
 ```bash
 # Build from source
