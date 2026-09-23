@@ -12,6 +12,8 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       # rustup 读取 rust-toolchain.toml 安装固定版本
@@ -56,3 +58,148 @@ jobs:
             exit 0
           fi
           cargo publish
+
+  # 先把 Release 创建出来，再由 bundle 的三个并行任务往上传附件。
+  # 如果让每个矩阵分支自己 `gh release create`，三者会撞在一起。
+  create-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Ensure the GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.publish.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release ${tag} already exists"
+            exit 0
+          fi
+          # --verify-tag：宁可失败也不要凭空造一个标签出来
+          gh release create "$tag" --verify-tag --title "$tag" \
+            --notes "netutils ${tag} — 主程序与全部插件的预编译包。解压后把 NETUTILS_PLUGIN_DIR 指向包内 plugins/ 目录即可使用插件子命令。"
+
+  # 二进制分发：主程序 + 全部插件装进同一个归档。
+  #
+  # 插件是独立的子进程（`src/plugin.rs` 的 `installed_binary` / `find_in_path`），
+  # 不参与主程序链接，所以这里只要把它们按 `<plugins>/<插件名>/bin/<二进制名>`
+  # 摆好，解压后设置 NETUTILS_PLUGIN_DIR 就能被发现，无需 `cargo install`。
+  bundle:
+    needs: [publish, create-release]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Windows 上也走 bash，打包脚本才能三个平台共用一份
+        shell: bash
+    env:
+      # 插件仓是独立仓库，版本号与本仓不对齐（插件 0.2.x / 主程序 0.6.x），
+      # 没有可直接复用的同名标签，因此默认取默认分支。
+      # 需要完全可复现的发布时，把它改成具体 commit 或标签。
+      PLUGINS_REF: main
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout plugins repo
+        uses: actions/checkout@v4
+        with:
+          repository: dreamsxin/netutils-plugins
+          ref: ${{ env.PLUGINS_REF }}
+          path: .plugins-src
+      # rustup 读取各自的 rust-toolchain.toml（两仓都固定 1.98.1）
+      - run: rustup show active-toolchain
+      - run: rustup target add ${{ matrix.target }}
+
+      - name: Build core binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # workspace 布局让一条命令产出全部插件二进制
+      - name: Build all plugin binaries
+        working-directory: .plugins-src
+        run: cargo build --release --locked --bins --workspace --target ${{ matrix.target }}
+
+      - name: Stage and archive
+        id: stage
+        run: |
+          set -euo pipefail
+          version="${{ needs.publish.outputs.version }}"
+          target="${{ matrix.target }}"
+          name="netutils-v${version}-${target}"
+          ext=""
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ext=".exe"
+          fi
+
+          stage="dist/${name}"
+          rm -rf dist
+          mkdir -p "${stage}/plugins"
+          cp "target/${target}/release/netutils${ext}" "${stage}/"
+
+          # `<插件目录>:<二进制名>`。ws 插件提供两个二进制，websocket 与 ws
+          # 共用同一个插件目录，这与 `external_command_target()` 的映射一致。
+          for entry in \
+            chrome-proxy:netutils-chrome-proxy \
+            mcp:netutils-mcp \
+            socks-probe:netutils-socks-probe \
+            sse:netutils-sse \
+            subdomain:netutils-subdomain \
+            ws:netutils-ws \
+            ws:netutils-websocket
+          do
+            plugin="${entry%%:*}"
+            bin="${entry##*:}"
+            mkdir -p "${stage}/plugins/${plugin}/bin"
+            cp ".plugins-src/target/${target}/release/${bin}${ext}" \
+               "${stage}/plugins/${plugin}/bin/"
+          done
+
+          for doc in README.md LICENSE; do
+            if [ -f "$doc" ]; then
+              cp "$doc" "${stage}/"
+            fi
+          done
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive="${name}.zip"
+            # windows runner 的 git bash 没有 zip，7z 是预装的
+            (cd dist && 7z a -tzip "../${archive}" "${name}" >/dev/null)
+          else
+            archive="${name}.tar.gz"
+            tar -czf "${archive}" -C dist "${name}"
+          fi
+
+          # macOS 只有 shasum，Linux/git bash 有 sha256sum
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${archive}" > "${archive}.sha256"
+          else
+            shasum -a 256 "${archive}" > "${archive}.sha256"
+          fi
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      # --clobber 让整个 workflow 可以安全重跑
+      - name: Upload archive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="v${{ needs.publish.outputs.version }}"
+          archive="${{ steps.stage.outputs.archive }}"
+          gh release upload "$tag" "$archive" "${archive}.sha256" --clobber

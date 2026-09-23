@@ -52,7 +52,51 @@ cargo install netutils-cli
 netutils --help
 ```
 
+### Prebuilt Bundles
+
+Each `v*` tag publishes an archive per platform on the GitHub Releases page containing the core binary **and every plugin**, so no `cargo install` is needed:
+
+- `netutils-v<version>-x86_64-unknown-linux-gnu.tar.gz`
+- `netutils-v<version>-aarch64-apple-darwin.tar.gz`
+- `netutils-v<version>-x86_64-pc-windows-msvc.zip`
+
+Every archive ships with a `.sha256` file; verify it before use.
+
+Layout inside the archive:
+
+```text
+netutils-v<version>-<target>/
+  netutils[.exe]
+  plugins/
+    chrome-proxy/bin/netutils-chrome-proxy[.exe]
+    mcp/bin/netutils-mcp[.exe]
+    socks-probe/bin/netutils-socks-probe[.exe]
+    sse/bin/netutils-sse[.exe]
+    subdomain/bin/netutils-subdomain[.exe]
+    ws/bin/netutils-ws[.exe]
+    ws/bin/netutils-websocket[.exe]
+```
+
+Plugins run as separate child processes, so they only need to be discoverable. Point `NETUTILS_PLUGIN_DIR` at the bundled `plugins/` directory and every plugin subcommand works without installing anything:
+
+```bash
+# Linux / macOS
+tar xzf netutils-v0.6.0-x86_64-unknown-linux-gnu.tar.gz
+cd netutils-v0.6.0-x86_64-unknown-linux-gnu
+export NETUTILS_PLUGIN_DIR="$PWD/plugins"
+./netutils socks-probe 127.0.0.1:1080
+```
+
+```powershell
+# Windows
+$env:NETUTILS_PLUGIN_DIR = "$PWD\plugins"
+.\netutils.exe socks-probe 127.0.0.1:1080
+```
+
+Without `NETUTILS_PLUGIN_DIR`, the plugin directory defaults to `%USERPROFILE%\.netutils\plugins` (`$HOME/.netutils/plugins` on Unix), which is where `netutils install` puts things. Bundled plugins carry no `plugin-lock.json`, so `netutils plugin list` reports their integrity as `unrecorded` — expected, since the archive checksum takes that role here.
+
 ### Quick Start
+
 
 ```bash
 # Build from source

@@ -1,2 +1,6 @@
 /target
 .zcode/
+# release workflow 的打包产物与插件仓的临时 checkout
+/dist
+/.plugins-src
+
