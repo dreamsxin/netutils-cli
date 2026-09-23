@@ -39,7 +39,7 @@
 
 ## 纵向切片
 
-- [ ] **T3 拆分 `connectivity` 并补 `check` 的时间戳**
+- [x] **T3 拆分 `connectivity` 并补 `check` 的时间戳**
   - 文件：`src/connectivity/mod.rs`
   - 内容：先采基线（见下），再拆出 `probe_one(..., mode) -> Option<CheckOutput>` 与 `render(&CheckOutput, OutputMode, concurrency)`；`run()` 对外签名与行为不变，改为两者组合；`finish()` 那个「返回 bool 表示是否已打印」的三重职责签名解开为纯 `finalize()`。同时补 `CheckProbe.ts` 与 `CheckOutput.started_at` / `finished_at`
   - **探测循环内的逐次实时输出留在 `probe_one` 里**，不挪到渲染阶段：那是探测过程的一部分，挪走会变成「全部探完再一次性刷屏」，违反 R9 的实时要求。`mode` 因此仍是 `probe_one` 的参数。`Option` 的 `None` 表示目标格式错误已就地报错，错误结果的结构化表示留给 T4

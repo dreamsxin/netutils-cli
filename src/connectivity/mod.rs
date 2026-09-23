@@ -72,8 +72,8 @@ pub async fn run(
     assertions: &[Assertion],
     mode: OutputMode,
 ) {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        run_http(
+    let output = if target.starts_with("http://") || target.starts_with("https://") {
+        probe_http(
             target,
             count,
             timeout,
@@ -85,9 +85,35 @@ pub async fn run(
             assertions,
             mode,
         )
-        .await;
+        .await
     } else {
-        run_tcp(target, count, timeout, interval, assertions, mode).await;
+        probe_tcp(target, count, timeout, interval, assertions, mode).await
+    };
+
+    if let Some(output) = output {
+        render(&output, mode, concurrency);
+    }
+}
+
+/// 渲染最终结果。
+///
+/// 逐次探测的实时输出**不**在这里——那是探测过程的一部分，挪到渲染阶段就会
+/// 变成「全部探完再一次性刷屏」，卡在哪一步就看不出来了。
+fn render(output: &CheckOutput, mode: OutputMode, concurrency: usize) {
+    if mode == OutputMode::Json {
+        print_json(output);
+        return;
+    }
+
+    print_stats(&output.stats, output.check_type != "tcp");
+
+    // 并发模式额外显示并发统计
+    if output.check_type == "http-concurrent" {
+        print_concurrent_stats(&output.probes, concurrency);
+    }
+
+    if let Some(evaluated) = &output.assertions {
+        assertion::print_report(evaluated);
     }
 }
 
@@ -137,9 +163,11 @@ fn check_metrics(output: &CheckOutput) -> Metrics {
     metrics
 }
 
-/// 统一收尾：评估断言、写入退出码、按模式渲染。
-/// 返回 `true` 表示已完成 JSON 输出，调用方应直接结束。
-fn finish(output: &mut CheckOutput, assertions: &[Assertion], mode: OutputMode) -> bool {
+/// 逐目标收尾：写入退出码、评估断言。
+///
+/// 不做任何输出——渲染由 [`render`] 负责。两者分开是为了让批量模式能拿到
+/// 结构化结果再自行决定怎么呈现。
+fn finalize(output: &mut CheckOutput, assertions: &[Assertion]) {
     if output.stats.success == 0 {
         crate::output::mark_failure();
     }
@@ -148,11 +176,6 @@ fn finish(output: &mut CheckOutput, assertions: &[Assertion], mode: OutputMode) 
         assertion::mark_exit_code(&evaluated);
         output.assertions = Some(evaluated);
     }
-    if mode == OutputMode::Json {
-        print_json(output);
-        return true;
-    }
-    false
 }
 
 /// 解析 host:port（支持 IPv6 如 [::1]:443）
@@ -196,15 +219,17 @@ fn parse_url(url: &str) -> Option<(String, u16, bool)> {
     Some((host, port, is_https))
 }
 
-/// TCP 连通性测试
-async fn run_tcp(
+/// TCP 连通性测试：只探测，不做最终渲染。
+///
+/// 返回 `None` 表示目标格式错误，已就地报错，没有可渲染的结果。
+async fn probe_tcp(
     target: &str,
     count: u32,
     connect_timeout: Duration,
     interval: Duration,
     assertions: &[Assertion],
     mode: OutputMode,
-) {
+) -> Option<CheckOutput> {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
@@ -220,7 +245,7 @@ async fn run_tcp(
             } else {
                 println!("  {}", t("check.format_err").red());
             }
-            return;
+            return None;
         }
     };
 
@@ -309,24 +334,18 @@ async fn run_tcp(
         check_type: "tcp".to_string(),
         started_at,
         finished_at: crate::timestamp::now_rfc3339_millis(),
-        probes: probes.clone(),
-        stats: stats.clone(),
+        probes,
+        stats,
         assertions: None,
     };
 
-    if finish(&mut output, assertions, mode) {
-        return;
-    }
-
-    print_stats(&stats, false);
-    if let Some(evaluated) = &output.assertions {
-        assertion::print_report(evaluated);
-    }
+    finalize(&mut output, assertions);
+    Some(output)
 }
 
-/// HTTP 连通性测试（自动检测并使用系统代理）
+/// HTTP 连通性测试（自动检测并使用系统代理）：只探测，不做最终渲染。
 #[allow(clippy::too_many_arguments)]
-async fn run_http(
+async fn probe_http(
     url: &str,
     count: u32,
     connect_timeout: Duration,
@@ -337,7 +356,7 @@ async fn run_http(
     concurrency: usize,
     assertions: &[Assertion],
     mode: OutputMode,
-) {
+) -> Option<CheckOutput> {
     // 运行窗口从确定代理之前开始算，与 TCP 路径保持一致
     let started_at = crate::timestamp::now_rfc3339_millis();
 
@@ -372,7 +391,7 @@ async fn run_http(
                         } else {
                             println!("  {}", format!("❌ {}", msg).red());
                         }
-                        return;
+                        return None;
                     }
                 }
             }
@@ -385,7 +404,7 @@ async fn run_http(
                 } else {
                     println!("  {}", format!("❌ {}", msg).red());
                 }
-                return;
+                return None;
             }
         }
     }
@@ -477,25 +496,13 @@ async fn run_http(
         },
         started_at,
         finished_at: crate::timestamp::now_rfc3339_millis(),
-        probes: probes.clone(),
-        stats: stats.clone(),
+        probes,
+        stats,
         assertions: None,
     };
 
-    if finish(&mut output, assertions, mode) {
-        return;
-    }
-
-    print_stats(&stats, true);
-
-    // 并发模式额外显示并发统计
-    if is_concurrent {
-        print_concurrent_stats(&probes, concurrency);
-    }
-
-    if let Some(evaluated) = &output.assertions {
-        assertion::print_report(evaluated);
-    }
+    finalize(&mut output, assertions);
+    Some(output)
 }
 
 /// 单次 HTTP 请求（reqwest，返回 CheckProbe，不打印）
