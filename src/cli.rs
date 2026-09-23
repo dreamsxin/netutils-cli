@@ -192,8 +192,11 @@ pub enum Commands {
     /// 连通性测试（TCP 端口 / HTTP URL）
     #[command(alias = "c")]
     Check {
-        /// 目标地址（host:port 或 http(s)://url）
-        target: String,
+        /// 目标地址（host:port 或 http(s)://url）；与 --targets-from 互斥
+        target: Option<String>,
+        /// 从文件读取目标清单，每行一个；`-` 表示标准输入
+        #[arg(long, value_name = "FILE|-", conflicts_with = "target")]
+        targets_from: Option<String>,
         /// 测试次数（默认 4）
         #[arg(short, long, default_value_t = 4)]
         count: u32,

@@ -6,7 +6,7 @@ use colored::*;
 use serde::Serialize;
 
 use crate::assertion::{self, Assertion, AssertionReport, Metrics};
-use crate::i18n::t;
+use crate::i18n::{t, t1};
 use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
@@ -46,6 +46,29 @@ pub struct CheckOutput {
     /// `--assert` 判定结果；未传断言时不出现在 JSON 中
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assertions: Option<AssertionReport>,
+    /// 目标自身不可探测时的原因（如格式错误）；正常探测时不出现
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 批量结果。
+///
+/// 刻意做成独立类型而不是改造 [`CheckOutput`]：单目标路径完全不经过这里，
+/// 因此它的 JSON 结构在结构上就不可能被批量改动波及。
+#[derive(Serialize)]
+pub struct BatchOutput {
+    pub mode: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub stats: BatchStats,
+    pub results: Vec<CheckOutput>,
+}
+
+#[derive(Serialize)]
+pub struct BatchStats {
+    pub targets: usize,
+    pub succeeded: usize,
+    pub failed: usize,
 }
 
 #[derive(Serialize, Clone)]
@@ -72,7 +95,134 @@ pub async fn run(
     assertions: &[Assertion],
     mode: OutputMode,
 ) {
-    let output = if target.starts_with("http://") || target.starts_with("https://") {
+    let output = probe_one(
+        target,
+        count,
+        timeout,
+        interval,
+        timing,
+        proxy,
+        no_proxy,
+        concurrency,
+        assertions,
+        mode,
+    )
+    .await;
+
+    match output {
+        Ok(output) => render(&output, mode, concurrency),
+        Err(msg) => report_target_error(&msg, mode),
+    }
+}
+
+/// 批量连通性测试：串行跑完清单里的每个目标。
+///
+/// 结果按清单顺序排列，单个目标失败不中断整批。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_batch(
+    targets: &[String],
+    count: u32,
+    timeout: Duration,
+    interval: Duration,
+    timing: bool,
+    proxy: Option<String>,
+    no_proxy: bool,
+    concurrency: usize,
+    assertions: &[Assertion],
+    mode: OutputMode,
+) {
+    let started_at = crate::timestamp::now_rfc3339_millis();
+    let total = targets.len();
+
+    if mode == OutputMode::Table {
+        println!();
+        println!("{}", t1("check.batch_title", &total.to_string()).bold());
+    }
+
+    let mut results = Vec::with_capacity(total);
+    for (i, target) in targets.iter().enumerate() {
+        // 分段标识带序号：长清单跑到一半时要能看出进行到哪个目标了
+        if mode == OutputMode::Table {
+            println!();
+            println!("  [{}/{}] {}", i + 1, total, target.bold());
+        }
+
+        let output = probe_one(
+            target,
+            count,
+            timeout,
+            interval,
+            timing,
+            proxy.clone(),
+            no_proxy,
+            concurrency,
+            assertions,
+            mode,
+        )
+        .await;
+
+        let output = match output {
+            Ok(output) => output,
+            // 目标自身不可探测也要占一个结果位，否则结果数与清单行数对不上，
+            // 消费方无法按行对齐。
+            Err(msg) => {
+                crate::output::mark_failure();
+                if mode == OutputMode::Table {
+                    println!("  {}", msg.red());
+                }
+                failed_output(target, msg)
+            }
+        };
+
+        if mode == OutputMode::Table {
+            render(&output, mode, concurrency);
+        }
+        results.push(output);
+    }
+
+    let succeeded = results.iter().filter(|o| o.stats.success > 0).count();
+    let output = BatchOutput {
+        mode: "batch".to_string(),
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
+        stats: BatchStats {
+            targets: total,
+            succeeded,
+            failed: total - succeeded,
+        },
+        results,
+    };
+
+    if mode == OutputMode::Json {
+        print_json(&output);
+        return;
+    }
+
+    println!();
+    println!(
+        "  {}",
+        t1("check.batch_summary", &total.to_string())
+            .replace("{1}", &succeeded.to_string())
+            .replace("{2}", &(total - succeeded).to_string())
+            .bold()
+    );
+}
+
+/// 探测单个目标。HTTP 与 TCP 的分派只看前缀，与既有行为一致。
+#[allow(clippy::too_many_arguments)]
+async fn probe_one(
+    target: &str,
+    count: u32,
+    timeout: Duration,
+    interval: Duration,
+    timing: bool,
+    proxy: Option<String>,
+    no_proxy: bool,
+    concurrency: usize,
+    assertions: &[Assertion],
+    mode: OutputMode,
+) -> Result<CheckOutput, String> {
+    if target.starts_with("http://") || target.starts_with("https://") {
         probe_http(
             target,
             count,
@@ -88,10 +238,30 @@ pub async fn run(
         .await
     } else {
         probe_tcp(target, count, timeout, interval, assertions, mode).await
-    };
+    }
+}
 
-    if let Some(output) = output {
-        render(&output, mode, concurrency);
+/// 目标级错误的统一上报。消息里已经带好 ❌，这里只按模式落地。
+fn report_target_error(msg: &str, mode: OutputMode) {
+    crate::output::mark_failure();
+    if mode == OutputMode::Json {
+        print_json_error(msg);
+    } else {
+        println!("  {}", msg.red());
+    }
+}
+
+/// 无法探测的目标（如格式错误）的占位结果：没有任何探测样本。
+fn failed_output(target: &str, error: String) -> CheckOutput {
+    CheckOutput {
+        target: target.to_string(),
+        check_type: "error".to_string(),
+        started_at: crate::timestamp::now_rfc3339_millis(),
+        finished_at: crate::timestamp::now_rfc3339_millis(),
+        probes: Vec::new(),
+        stats: compute_stats(&[]),
+        assertions: None,
+        error: Some(error),
     }
 }
 
@@ -102,6 +272,11 @@ pub async fn run(
 fn render(output: &CheckOutput, mode: OutputMode, concurrency: usize) {
     if mode == OutputMode::Json {
         print_json(output);
+        return;
+    }
+
+    // 没有探测样本（目标本身不可用）时没什么可统计的
+    if output.check_type == "error" {
         return;
     }
 
@@ -221,7 +396,8 @@ fn parse_url(url: &str) -> Option<(String, u16, bool)> {
 
 /// TCP 连通性测试：只探测，不做最终渲染。
 ///
-/// 返回 `None` 表示目标格式错误，已就地报错，没有可渲染的结果。
+/// 目标格式错误时返回 `Err(消息)`，由调用方决定怎么报——单目标直接打印，
+/// 批量则要把它记成一条失败结果，否则结果数与清单行数对不上。
 async fn probe_tcp(
     target: &str,
     count: u32,
@@ -229,7 +405,7 @@ async fn probe_tcp(
     interval: Duration,
     assertions: &[Assertion],
     mode: OutputMode,
-) -> Option<CheckOutput> {
+) -> Result<CheckOutput, String> {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
@@ -238,15 +414,7 @@ async fn probe_tcp(
 
     let (host, port) = match parse_host_port(target) {
         Some(hp) => hp,
-        None => {
-            crate::output::mark_failure();
-            if mode == OutputMode::Json {
-                print_json_error(&t("check.format_err"));
-            } else {
-                println!("  {}", t("check.format_err").red());
-            }
-            return None;
-        }
+        None => return Err(t("check.format_err")),
     };
 
     let mut probes = Vec::new();
@@ -337,10 +505,11 @@ async fn probe_tcp(
         probes,
         stats,
         assertions: None,
+        error: None,
     };
 
     finalize(&mut output, assertions);
-    Some(output)
+    Ok(output)
 }
 
 /// HTTP 连通性测试（自动检测并使用系统代理）：只探测，不做最终渲染。
@@ -356,7 +525,7 @@ async fn probe_http(
     concurrency: usize,
     assertions: &[Assertion],
     mode: OutputMode,
-) -> Option<CheckOutput> {
+) -> Result<CheckOutput, String> {
     // 运行窗口从确定代理之前开始算，与 TCP 路径保持一致
     let started_at = crate::timestamp::now_rfc3339_millis();
 
@@ -384,27 +553,13 @@ async fn probe_http(
                 {
                     Ok(Ok(_)) => {} // 代理端口可达，继续
                     _ => {
-                        let msg = format!("代理不可达: {}", proxy_url);
-                        crate::output::mark_failure();
-                        if mode == OutputMode::Json {
-                            print_json_error(&msg);
-                        } else {
-                            println!("  {}", format!("❌ {}", msg).red());
-                        }
-                        return None;
+                        return Err(format!("❌ 代理不可达: {}", proxy_url));
                     }
                 }
             }
             None => {
                 // 代理地址格式无效（如端口超范围），直接报错
-                let msg = format!("代理地址无效: {}", proxy_url);
-                crate::output::mark_failure();
-                if mode == OutputMode::Json {
-                    print_json_error(&msg);
-                } else {
-                    println!("  {}", format!("❌ {}", msg).red());
-                }
-                return None;
+                return Err(format!("❌ 代理地址无效: {}", proxy_url));
             }
         }
     }
@@ -499,10 +654,11 @@ async fn probe_http(
         probes,
         stats,
         assertions: None,
+        error: None,
     };
 
     finalize(&mut output, assertions);
-    Some(output)
+    Ok(output)
 }
 
 /// 单次 HTTP 请求（reqwest，返回 CheckProbe，不打印）

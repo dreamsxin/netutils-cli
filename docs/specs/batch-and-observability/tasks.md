@@ -48,7 +48,7 @@
   - 验收：基线 `diff` 为空；三道门通过
   - 需求：R4 R5 R7
 
-- [ ] **T4 `check --targets-from`（串行）**
+- [x] **T4 `check --targets-from`（串行）**
   - 文件：新增 `src/targets.rs`；改 `src/cli.rs`、`src/main.rs`、`src/connectivity/mod.rs`、`src/i18n.rs`
   - 内容：`load_targets(spec) -> Result<Vec<String>, String>`（`-` 读 stdin，去 BOM 与尾部 `\r`，trim，跳过空行与 `#` 起始行，保序不去重，空结果报错）；`check.target` 改 `Option<String>` 并与 `--targets-from` 互斥；新增 `BatchOutput`；**串行**遍历清单，逐目标独立断言；表格模式加分段标识与末尾总览
   - 验收：`load_targets` 单测覆盖注释/空行/CRLF/BOM/全注释报错/不存在路径报错/重复保留/保序；3 行清单 `--json` 的 `results` 与清单同序；单个格式错误目标不中断整批；无参与双给均为退出码 2；部分失败退出码 1、断言失败 3

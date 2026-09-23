@@ -26,6 +26,7 @@ mod proxy_test;
 mod route_get;
 mod route_probe;
 mod table;
+mod targets;
 mod timestamp;
 mod tls_probe;
 mod traceroute;
@@ -135,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(Commands::Check {
                 target,
+                targets_from,
                 count,
                 timeout,
                 interval,
@@ -147,19 +149,57 @@ async fn main() -> anyhow::Result<()> {
                 let Some(assertions) = parse_assertions(&assertions, mode) else {
                     return;
                 };
-                connectivity::run(
-                    &target,
-                    count,
-                    Duration::from_secs(timeout),
-                    Duration::from_secs(interval),
-                    timing,
-                    proxy,
-                    no_proxy,
-                    concurrency,
-                    &assertions,
-                    mode,
-                )
-                .await
+                // 目标来源二选一。clap 已经拦掉「两个都给」，这里只需要覆盖
+                // 「一个都不给」，并且用 i18n 文案而不是 clap 的英文报错。
+                let targets = match (target, targets_from) {
+                    (Some(one), _) => Some(vec![one]),
+                    (None, Some(spec)) => match targets::load_targets(&spec) {
+                        Ok(list) => Some(list),
+                        Err(msg) => {
+                            report_usage_error(&msg, mode);
+                            None
+                        }
+                    },
+                    (None, None) => {
+                        report_usage_error(&i18n::t("check.target_missing"), mode);
+                        None
+                    }
+                };
+                let Some(targets) = targets else {
+                    return;
+                };
+
+                let timeout = Duration::from_secs(timeout);
+                let interval = Duration::from_secs(interval);
+                if let [single] = targets.as_slice() {
+                    connectivity::run(
+                        single,
+                        count,
+                        timeout,
+                        interval,
+                        timing,
+                        proxy,
+                        no_proxy,
+                        concurrency,
+                        &assertions,
+                        mode,
+                    )
+                    .await
+                } else {
+                    connectivity::run_batch(
+                        &targets,
+                        count,
+                        timeout,
+                        interval,
+                        timing,
+                        proxy,
+                        no_proxy,
+                        concurrency,
+                        &assertions,
+                        mode,
+                    )
+                    .await
+                }
             }
             Some(Commands::Http {
                 url,
@@ -362,6 +402,17 @@ where
         .map_err(|err| format!("failed to spawn generator thread: {err}"))?
         .join()
         .map_err(|_| "generator thread panicked".to_string())
+}
+
+/// 目标来源相关的用法错误：与 `--assert` 语法错误同类，退出码 2，
+/// 且在发出任何探测之前结束。
+fn report_usage_error(msg: &str, mode: OutputMode) {
+    if mode == OutputMode::Json {
+        output::print_json_error(msg);
+    } else {
+        eprintln!("{msg}");
+    }
+    output::mark_exit_code(2);
 }
 
 /// 解析 `--assert` 表达式。语法错误属于 CLI 用法错误，直接以退出码 2 结束。

@@ -298,6 +298,36 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
         // ── check ──
         ("check.title", "🔌 连通性测试: {0}", "🔌 Connectivity: {0}"),
         (
+            "check.batch_title",
+            "🔌 批量连通性测试: {0} 个目标",
+            "🔌 Connectivity sweep: {0} targets",
+        ),
+        (
+            "check.batch_summary",
+            "共 {0} 个目标，成功 {1}，失败 {2}",
+            "{0} targets, {1} succeeded, {2} failed",
+        ),
+        (
+            "check.target_conflict",
+            "❌ 目标与 --targets-from 不能同时指定",
+            "❌ A target and --targets-from are mutually exclusive",
+        ),
+        (
+            "check.target_missing",
+            "❌ 需要一个目标，或用 --targets-from 指定清单",
+            "❌ Provide a target, or a list via --targets-from",
+        ),
+        (
+            "targets.read_fail",
+            "❌ 读取目标清单失败: {0}",
+            "❌ Cannot read the target list: {0}",
+        ),
+        (
+            "targets.empty",
+            "❌ 目标清单为空：去掉注释与空行后没有目标",
+            "❌ The target list is empty: nothing left after comments and blank lines",
+        ),
+        (
             "check.format_err",
             "❌ 格式错误，请使用 host:port",
             "❌ Invalid format, use host:port",
