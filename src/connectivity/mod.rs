@@ -23,6 +23,8 @@ pub struct TimingBreakdown {
 /// 单次测试结果
 #[derive(Serialize, Clone)]
 pub struct CheckProbe {
+    /// 探测**发起**时刻（RFC 3339 UTC）。用于把逐条记录与其他遥测对齐。
+    pub ts: String,
     pub success: bool,
     pub rtt_ms: f64,
     pub status_code: Option<u16>,
@@ -36,6 +38,9 @@ pub struct CheckProbe {
 pub struct CheckOutput {
     pub target: String,
     pub check_type: String,
+    /// 本次运行覆盖的时间窗口（RFC 3339 UTC）
+    pub started_at: String,
+    pub finished_at: String,
     pub probes: Vec<CheckProbe>,
     pub stats: CheckStats,
     /// `--assert` 判定结果；未传断言时不出现在 JSON 中
@@ -203,6 +208,9 @@ async fn run_tcp(
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
+    // 运行窗口从解析目标之前开始算，与 ping/scan 的取法保持一致
+    let started_at = crate::timestamp::now_rfc3339_millis();
+
     let (host, port) = match parse_host_port(target) {
         Some(hp) => hp,
         None => {
@@ -220,6 +228,9 @@ async fn run_tcp(
 
     for i in 0..count {
         let start = Instant::now();
+        // 时间戳在发起处取一次，三个分支共用：让每个构造点各自取会把
+        // 「超时结束」的时刻当成「探测发起」的时刻。
+        let ts = crate::timestamp::now_rfc3339_millis();
         let addr = format!("{}:{}", host, port);
         let result = timeout(connect_timeout, TcpStream::connect(&addr)).await;
         let elapsed = start.elapsed();
@@ -237,6 +248,7 @@ async fn run_tcp(
                     );
                 }
                 probes.push(CheckProbe {
+                    ts: ts.clone(),
                     success: true,
                     rtt_ms: elapsed.as_secs_f64() * 1000.0,
                     status_code: None,
@@ -256,6 +268,7 @@ async fn run_tcp(
                     );
                 }
                 probes.push(CheckProbe {
+                    ts: ts.clone(),
                     success: false,
                     rtt_ms: elapsed.as_secs_f64() * 1000.0,
                     status_code: None,
@@ -275,6 +288,7 @@ async fn run_tcp(
                     );
                 }
                 probes.push(CheckProbe {
+                    ts: ts.clone(),
                     success: false,
                     rtt_ms: connect_timeout.as_secs_f64() * 1000.0,
                     status_code: None,
@@ -293,6 +307,8 @@ async fn run_tcp(
     let mut output = CheckOutput {
         target: target.to_string(),
         check_type: "tcp".to_string(),
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
         probes: probes.clone(),
         stats: stats.clone(),
         assertions: None,
@@ -322,6 +338,9 @@ async fn run_http(
     assertions: &[Assertion],
     mode: OutputMode,
 ) {
+    // 运行窗口从确定代理之前开始算，与 TCP 路径保持一致
+    let started_at = crate::timestamp::now_rfc3339_millis();
+
     // 确定代理：--proxy 优先 > --no-proxy 强制直连 > 系统自动检测
     let proxy_addr = if let Some(ref p) = proxy {
         Some(p.clone())
@@ -456,6 +475,8 @@ async fn run_http(
         } else {
             "http".to_string()
         },
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
         probes: probes.clone(),
         stats: stats.clone(),
         assertions: None,
@@ -480,6 +501,7 @@ async fn run_http(
 /// 单次 HTTP 请求（reqwest，返回 CheckProbe，不打印）
 async fn run_http_single(client: &reqwest::Client, url: &str, _i: u32, _count: u32) -> CheckProbe {
     let start = Instant::now();
+    let ts = crate::timestamp::now_rfc3339_millis();
     let result = client.get(url).send().await;
     let elapsed = start.elapsed();
 
@@ -488,6 +510,7 @@ async fn run_http_single(client: &reqwest::Client, url: &str, _i: u32, _count: u
             let status_code = resp.status().as_u16();
             let is_success = resp.status().is_success();
             CheckProbe {
+                ts,
                 success: is_success,
                 rtt_ms: elapsed.as_secs_f64() * 1000.0,
                 status_code: Some(status_code),
@@ -504,6 +527,7 @@ async fn run_http_single(client: &reqwest::Client, url: &str, _i: u32, _count: u
                 e.to_string()
             };
             CheckProbe {
+                ts,
                 success: false,
                 rtt_ms: elapsed.as_secs_f64() * 1000.0,
                 status_code: None,
@@ -611,10 +635,15 @@ async fn run_http_timing(
     use tokio::net::TcpStream;
     use tokio_rustls::TlsConnector;
 
+    // 分步计时路径有十余处早返回，时间戳在函数入口取一次，各分支共用：
+    // 逐个构造点各取一次会让「失败在哪一步」和「什么时候发起」互相污染。
+    let ts = crate::timestamp::now_rfc3339_millis();
+
     let (host, port, _) = match parse_url(url) {
         Some(hp) => hp,
         None => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: 0.0,
                 status_code: None,
@@ -636,6 +665,7 @@ async fn run_http_timing(
     let ips = crate::util::resolve_host_all(&host).await;
     if ips.is_empty() {
         return CheckProbe {
+            ts: ts.clone(),
             success: false,
             rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
             status_code: None,
@@ -664,6 +694,7 @@ async fn run_http_timing(
         Some(s) => s,
         None => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -694,6 +725,7 @@ async fn run_http_timing(
         Ok(n) => n,
         Err(e) => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -712,6 +744,7 @@ async fn run_http_timing(
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
                 return CheckProbe {
+                    ts: ts.clone(),
                     success: false,
                     rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                     status_code: None,
@@ -726,6 +759,7 @@ async fn run_http_timing(
             }
             Err(_) => {
                 return CheckProbe {
+                    ts: ts.clone(),
                     success: false,
                     rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                     status_code: None,
@@ -753,6 +787,7 @@ async fn run_http_timing(
         Ok(Ok(())) => {}
         Ok(Err(_)) => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -767,6 +802,7 @@ async fn run_http_timing(
         }
         Err(_) => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -787,6 +823,7 @@ async fn run_http_timing(
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -801,6 +838,7 @@ async fn run_http_timing(
         }
         Err(_) => {
             return CheckProbe {
+                ts: ts.clone(),
                 success: false,
                 rtt_ms: t0.elapsed().as_secs_f64() * 1000.0,
                 status_code: None,
@@ -857,6 +895,7 @@ async fn run_http_timing(
     }
 
     CheckProbe {
+        ts,
         success: is_success,
         rtt_ms: total_ms,
         status_code: Some(status_code),
