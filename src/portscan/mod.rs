@@ -43,6 +43,8 @@ const COMMON_PORTS: &[(u16, &str)] = &[
 #[derive(Serialize, Clone)]
 pub struct PortResult {
     pub port: u16,
+    /// 该端口探测**发起**时刻（RFC 3339 UTC）
+    pub ts: String,
     pub open: bool,
     pub ip: Option<String>,
     pub service: String,
@@ -53,6 +55,9 @@ pub struct PortResult {
 pub struct ScanOutput {
     pub host: String,
     pub target: String,
+    /// 本次扫描覆盖的时间窗口（RFC 3339 UTC）
+    pub started_at: String,
+    pub finished_at: String,
     pub total_scanned: usize,
     pub open_count: usize,
     pub results: Vec<PortResult>,
@@ -61,6 +66,9 @@ pub struct ScanOutput {
 /// 执行端口扫描并输出结果
 pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: OutputMode) {
     let concurrency = concurrency.max(1);
+    // 扫描窗口从解析之前开始算：多 A 记录域名的解析本身可能是耗时的一段，
+    // 把它排除在外会让 started_at 与实际命令起点脱节。
+    let started_at = crate::timestamp::now_rfc3339_millis();
 
     // 解析主机；多 A 记录域名对每个端口尝试多个候选 IP，避免单个后端异常导致误判。
     let targets = crate::util::resolve_host_all(host).await;
@@ -111,6 +119,8 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     let output = ScanOutput {
         host: host.to_string(),
         target: target_label.clone(),
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
         total_scanned: results.len(),
         open_count,
         results: results.clone(),
@@ -183,12 +193,17 @@ async fn scan_port(targets: &[IpAddr], port: u16) -> PortResult {
         .map(|(_, s)| *s)
         .unwrap_or("unknown");
 
+    // 时间戳取自第一次尝试之前：多候选 IP 会串行重试，取结束时刻就无法反映
+    // 该端口实际是什么时候开始探的。
+    let ts = crate::timestamp::now_rfc3339_millis();
+
     for target in targets.iter().copied().take(8) {
         let addr = SocketAddr::new(target, port);
         let result = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await;
         if result.map(|r| r.is_ok()).unwrap_or(false) {
             return PortResult {
                 port,
+                ts,
                 open: true,
                 ip: Some(target.to_string()),
                 service: service.to_string(),
@@ -198,6 +213,7 @@ async fn scan_port(targets: &[IpAddr], port: u16) -> PortResult {
 
     PortResult {
         port,
+        ts,
         open: false,
         ip: None,
         service: service.to_string(),

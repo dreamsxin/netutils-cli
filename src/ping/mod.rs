@@ -13,6 +13,8 @@ use crate::table::print_table;
 #[derive(Debug, Clone, Serialize)]
 pub struct ProbeResult {
     pub seq: u32,
+    /// 探测**发起**时刻（RFC 3339 UTC）。用于把逐条记录与其他遥测对齐。
+    pub ts: String,
     pub success: bool,
     pub rtt_ms: Option<f64>,
     pub error: Option<String>,
@@ -35,6 +37,9 @@ pub struct PingStats {
 pub struct PingOutput {
     pub host: String,
     pub target: String,
+    /// 本次运行覆盖的时间窗口（RFC 3339 UTC）
+    pub started_at: String,
+    pub finished_at: String,
     pub probes: Vec<ProbeResult>,
     pub stats: PingStats,
 }
@@ -72,6 +77,10 @@ impl Prober {
 ///
 /// `count == 0` 表示持续探测直到 Ctrl-C。
 pub async fn run(host: &str, count: u32, timeout: Duration, interval: Duration, mode: OutputMode) {
+    // 运行窗口从解析之前开始算：DNS 解析本身可能是耗时的一段，把它排除在外
+    // 会让 started_at 与实际命令起点脱节。
+    let started_at = crate::timestamp::now_rfc3339_millis();
+
     // 解析主机
     let target = match crate::util::resolve_host(host).await {
         Some(ip) => ip,
@@ -137,6 +146,8 @@ pub async fn run(host: &str, count: u32, timeout: Duration, interval: Duration, 
     let output = PingOutput {
         host: host.to_string(),
         target: target.to_string(),
+        started_at,
+        finished_at: crate::timestamp::now_rfc3339_millis(),
         probes,
         stats,
     };
@@ -263,21 +274,28 @@ async fn icmp_probe_once(
     let payload = [0u8; 32];
     let mut pinger = client.pinger(target, identifier).await;
 
+    // 时间戳在发起处取一次：让每个 ProbeResult 构造点各自取会拿到不同时刻，
+    // 失败分支还会把「超时结束」的时间当成「探测发起」的时间。
+    let ts = crate::timestamp::now_rfc3339_millis();
+
     match tokio::time::timeout(timeout, pinger.ping(PingSequence(seq as u16), &payload)).await {
         Ok(Ok((_, rtt))) => ProbeResult {
             seq,
+            ts,
             success: true,
             rtt_ms: Some(rtt.as_secs_f64() * 1000.0),
             error: None,
         },
         Ok(Err(e)) => ProbeResult {
             seq,
+            ts,
             success: false,
             rtt_ms: None,
             error: Some(format!("{}", e)),
         },
         Err(_) => ProbeResult {
             seq,
+            ts,
             success: false,
             rtt_ms: None,
             error: Some(t("ping.timeout")),
@@ -291,23 +309,27 @@ async fn tcp_probe_once(target: std::net::IpAddr, seq: u32, timeout: Duration) -
     use tokio::net::TcpStream;
 
     let start = Instant::now();
+    let ts = crate::timestamp::now_rfc3339_millis();
     let addr = SocketAddr::new(target, 80);
 
     match tokio::time::timeout(timeout, TcpStream::connect(addr)).await {
         Ok(Ok(_stream)) => ProbeResult {
             seq,
+            ts,
             success: true,
             rtt_ms: Some(start.elapsed().as_secs_f64() * 1000.0),
             error: None,
         },
         Ok(Err(e)) => ProbeResult {
             seq,
+            ts,
             success: false,
             rtt_ms: None,
             error: Some(format!("TCP: {}", e)),
         },
         Err(_) => ProbeResult {
             seq,
+            ts,
             success: false,
             rtt_ms: None,
             error: Some(t("ping.timeout")),
