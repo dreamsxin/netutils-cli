@@ -197,6 +197,10 @@ pub enum Commands {
         /// 从文件读取主机清单，每行一个；`-` 表示标准输入
         #[arg(long, value_name = "FILE|-", conflicts_with = "host")]
         targets_from: Option<String>,
+        /// 同时扫描的主机数（默认 1）。> 1 时每台主机完成即打印一行，而不是
+        /// 完整表格——并发下表格会交错到不可读
+        #[arg(long, default_value_t = 1)]
+        parallel: usize,
         /// 并发数（默认 100）
         #[arg(long, default_value_t = 100)]
         concurrency: usize,

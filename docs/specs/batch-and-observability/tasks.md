@@ -60,10 +60,18 @@
   - 验收：基线 `diff` 为空；`scan --targets-from f 80` 报互斥错误而非把 `80` 当主机；清单内每台主机用同一份端口集合
   - 需求：R1 R7 R8 R9
 
-- [ ] **T6 `--parallel`**
-  - 文件：新增 `src/batch.rs`；改 `src/cli.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`
-  - 内容：`run_targets(targets, parallel, run_one)`，`Semaphore` + `JoinSet`，按索引回填保序；共享输入用 `Arc`（`JoinSet` 要求 `'static`）；独立任务监听 Ctrl-C 只置 `AtomicBool`，派发前检查，**不用 `select!` 取消在飞任务**；表格模式 `--parallel > 1` 时抑制单目标内部逐次行，改为**每个目标完成即打印一行**带完成计数器与目标名的结果（**不缓冲**，见 design §1.4）
-  - 验收：`run_targets` 单测（乱序完成时间下结果仍按输入序；同时在飞数不超过 N）；`--parallel > 1` 时每个目标内部仍遵守 `--interval`（回归测试，`--concurrency > 1` 已有绕过 `--interval` 的先例，不能重犯）；并发跑多目标时输出随完成即时出现，不是结束才一次性刷出；Ctrl-C 后已完成部分已在屏幕上且退出码非 0
+- [x] **T6 `scan --parallel`**
+  - 文件：新增 `src/batch.rs`；改 `src/cli.rs`、`src/portscan/mod.rs`、`src/main.rs`
+  - 内容：`run_targets(targets, parallel, run_one)`，`Semaphore` + `JoinSet`，按索引回填保序；先拿许可再派发（限制在飞数并提供背压）；独立任务监听 Ctrl-C 只置 `AtomicBool`，派发前检查，**不用 `select!` 取消在飞任务**；`scan` 表格模式 `parallel > 1` 时每台主机完成即打印一行带完成计数器的结果（**不缓冲**，见 design §1.4）
+  - 验收：`run_targets` 3 个单测（乱序完成时间下结果仍按输入序；同时在飞数不超过 N；`parallel == 0` 视作串行）；实测 4 台主机 `--parallel 4` 时表格按完成顺序逐行出现而 JSON `results` 仍为清单顺序
+  - 需求：R3 R9 R9b R11
+
+  > **范围拆分（实施中决定）**：`check --parallel` 另起一个切片。`scan` 的所有输出都在 `render` 里，并发只需换一层编排；而 `check` 在探测循环内部就有逐次实时行（`src/connectivity/mod.rs` 五处 `mode == OutputMode::Table` 门），并发时必须先把这些行抑制掉，否则多目标交错不可读。抑制需要一个贯穿 `probe_one` / `probe_tcp` / `probe_http` 的开关，而这三个签名已经长到要 `#[allow(clippy::too_many_arguments)]`，值得单独一次改动来做，不混在本切片里。
+
+- [ ] **T6b `check --parallel`**
+  - 文件：`src/connectivity/mod.rs`、`src/cli.rs`、`src/main.rs`
+  - 内容：复用 `batch::run_targets`；断言列表以 `Arc` 共享（`JoinSet` 要求 `'static`）；并发时抑制单目标内部的逐次行，改为每目标完成即打印一行
+  - 验收：`--parallel > 1` 时每个目标内部仍遵守 `--interval`（回归测试，`--concurrency > 1` 已有绕过 `--interval` 的先例，不能重犯）；输出随完成即时出现
   - 需求：R3 R9 R9b R11
 
 - [ ] **T7 `--ndjson`**

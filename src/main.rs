@@ -1,4 +1,5 @@
 mod assertion;
+mod batch;
 mod cli;
 mod color;
 mod connections;
@@ -127,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
                 ports,
                 ports_flag,
                 targets_from,
+                parallel,
                 concurrency,
             }) => {
                 // 位置参数与 -p 等价。批量模式下只有 -p 可用：两个位置参数
@@ -159,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
                 if let [single] = hosts.as_slice() {
                     portscan::run(single, port_ref, concurrency, mode).await
                 } else {
-                    portscan::run_batch(&hosts, port_ref, concurrency, mode).await
+                    portscan::run_batch(&hosts, port_ref, concurrency, parallel, mode).await
                 }
             }
             Some(Commands::Check {

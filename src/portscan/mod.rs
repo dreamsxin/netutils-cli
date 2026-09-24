@@ -1,6 +1,8 @@
 //! 端口扫描模块：并发 TCP connect 扫描。
 
 use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use colored::*;
@@ -73,6 +75,8 @@ pub struct ScanBatchOutput {
     pub started_at: String,
     pub finished_at: String,
     pub stats: ScanBatchStats,
+    /// 被 Ctrl-C 打断时为 true：此时 results 只覆盖已派发的主机
+    pub interrupted: bool,
     pub results: Vec<ScanOutput>,
 }
 
@@ -91,11 +95,16 @@ pub async fn run(host: &str, ports: Option<&[u16]>, concurrency: usize, mode: Ou
     }
 }
 
-/// 批量扫描：串行跑完清单里的每台主机，共用同一份端口集合。
+/// 批量扫描：跑完清单里的每台主机，共用同一份端口集合。
+///
+/// `parallel == 1` 时串行，每台主机的完整表格实时打出。`parallel > 1` 时并发，
+/// 单台主机的表格会交错到不可读，因此改为**每台完成即打印一行**带计数器的
+/// 结果——降粒度，而不是缓冲到最后（见 spec R9）。
 pub async fn run_batch(
     hosts: &[String],
     ports: Option<&[u16]>,
     concurrency: usize,
+    parallel: usize,
     mode: OutputMode,
 ) {
     let started_at = crate::timestamp::now_rfc3339_millis();
@@ -106,42 +115,56 @@ pub async fn run_batch(
         println!("{}", t1("scan.batch_title", &total.to_string()).bold());
     }
 
-    let mut results = Vec::with_capacity(total);
-    for (i, host) in hosts.iter().enumerate() {
-        // 分段标识带序号：长清单跑到一半时要能看出进行到哪台主机了
-        if mode == OutputMode::Table {
-            println!();
-            println!("  [{}/{}] {}", i + 1, total, host.bold());
-        }
-
-        match probe_host(host, ports, concurrency).await {
-            Ok(output) => {
+    let (results, interrupted) = if parallel > 1 {
+        let shared_ports = ports.map(|p| Arc::new(p.to_vec()));
+        let done = Arc::new(AtomicUsize::new(0));
+        let run = crate::batch::run_targets(hosts.to_vec(), parallel, move |_, host| {
+            let shared_ports = shared_ports.clone();
+            let done = done.clone();
+            async move {
+                let slice = shared_ports.as_ref().map(|p| p.as_slice());
+                let output = normalize(&host, probe_host(&host, slice, concurrency).await);
                 if mode == OutputMode::Table {
-                    render(&output, concurrency, mode);
+                    let seq = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    print_progress_line(seq, total, &output);
                 }
-                results.push(output);
+                output
             }
-            // 解析失败的主机也要占一个结果位，否则结果数与清单行数对不上
-            Err(msg) => {
-                crate::output::mark_failure();
-                if mode == OutputMode::Table {
-                    println!("  {}", msg.red());
+        })
+        .await;
+        (run.results, run.interrupted)
+    } else {
+        let mut results = Vec::with_capacity(total);
+        for (i, host) in hosts.iter().enumerate() {
+            // 分段标识带序号：长清单跑到一半时要能看出进行到哪台主机了
+            if mode == OutputMode::Table {
+                println!();
+                println!("  [{}/{}] {}", i + 1, total, host.bold());
+            }
+            let output = normalize(host, probe_host(host, ports, concurrency).await);
+            if mode == OutputMode::Table {
+                match &output.error {
+                    Some(msg) => println!("  {}", msg.red()),
+                    None => render(&output, concurrency, mode),
                 }
-                results.push(failed_output(host, msg));
             }
+            results.push(output);
         }
-    }
+        (results, false)
+    };
 
     let with_open = results.iter().filter(|o| o.open_count > 0).count();
+    let scanned = results.len();
     let output = ScanBatchOutput {
         mode: "batch".to_string(),
         started_at,
         finished_at: crate::timestamp::now_rfc3339_millis(),
         stats: ScanBatchStats {
-            hosts: total,
+            hosts: scanned,
             with_open,
-            without_open: total - with_open,
+            without_open: scanned - with_open,
         },
+        interrupted,
         results,
     };
 
@@ -153,10 +176,49 @@ pub async fn run_batch(
     println!();
     println!(
         "  {}",
-        t1("scan.batch_summary", &total.to_string())
+        t1("scan.batch_summary", &scanned.to_string())
             .replace("{1}", &with_open.to_string())
             .bold()
     );
+}
+
+/// 并发模式下每台主机完成时的一行结果。
+fn print_progress_line(seq: usize, total: usize, output: &ScanOutput) {
+    let width = total.to_string().len();
+    match &output.error {
+        Some(msg) => println!(
+            "  [{:>width$}/{}] {:<28} {}",
+            seq,
+            total,
+            output.host,
+            msg.red(),
+            width = width
+        ),
+        None => println!(
+            "  [{:>width$}/{}] {:<28} {}",
+            seq,
+            total,
+            output.host,
+            t2(
+                "scan.done",
+                &output.open_count.to_string(),
+                &output.total_scanned.to_string()
+            ),
+            width = width
+        ),
+    }
+}
+
+/// 把探测结果收敛成一条必定存在的结果：解析失败的主机也要占位，
+/// 否则结果数与清单行数对不上。
+fn normalize(host: &str, result: Result<ScanOutput, String>) -> ScanOutput {
+    match result {
+        Ok(output) => output,
+        Err(msg) => {
+            crate::output::mark_failure();
+            failed_output(host, msg)
+        }
+    }
 }
 
 /// 解析失败的主机的占位结果。
