@@ -65,8 +65,13 @@
   逐行 `diff` 验证，而不是靠人工通读
 
 ### 工程
+- 新增 `tests/cli_smoke.rs`：启动二进制、跑通 `--version` / `--help` / 每个子命令的
+  `--help`、以及两条用法错误的退出码。此前 `cargo test` 从不启动二进制，因此对
+  「命令行解析阶段就崩」这一整类问题完全失明——0.7.0 那次栈溢出连 `--version`
+  都起不来，而 233 个单测全绿、三道门全过。把栈临时改小到 512 KB 实测过，
+  5 条里有 4 条会红，确认这层网不是空的
 - 新增 `ROADMAP.md`（里程碑与明确不做的事）、`AGENTS.md`（SDD 流程与门禁、
-  两仓关系、不依赖日期库等不体现在源码里的决定）
+  两仓关系、不依赖日期库等不体现在源码里的决定，以及三类门禁盖不住的失败）
 - 发布流程重构为 `resolve → publish → create-release → bundle → finalize-release`：
   单点解析版本与标签提交、把插件仓 ref 钉成具体 commit、Release 先建 draft
   待三平台产物齐全再转正、顶层 `concurrency` 串行化发布

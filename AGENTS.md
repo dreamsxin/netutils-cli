@@ -27,6 +27,19 @@ Non-trivial work goes through a spec before any code is written. Specs live in
 - If implementation reveals the design was wrong, stop and update `design.md`
   first. Do not let code and spec diverge silently.
 
+**Slice tasks vertically, not by layer.** Each task must deliver one narrow
+working feature and bring in whatever module it is the first to need. Do not
+plan a task that lands a module with no caller: `-D warnings` makes the
+resulting `dead_code` a hard error, so such a commit cannot pass its own gates.
+This is not a quirk to work around — a commit with no consumer cannot be tested,
+verified or reverted on its own. The first spec here was planned bottom-up and
+had to be re-sliced mid-flight.
+
+**A slice is not done until it is discoverable.** The feature exists for a user
+who has to find it, and `README.md` is the only entry point. Documentation moves
+with the slice that adds the behaviour, never batched to the end.
+
+
 A spec is done when every box in `tasks.md` is ticked and the verification gates
 below pass. Keep finished specs in the tree — they are the design record.
 
@@ -53,6 +66,36 @@ Notes:
   Do not bump it as a side effect of another change.
 - Cargo.lock is committed in both repos and the release workflow builds with
   `--locked`. If you change dependencies, commit the updated lock.
+
+### What the gates do not cover
+
+Three classes of failure have shipped past all three gates. Check them by hand.
+
+- **Timing behaviour.** Unit tests assert branches, not elapsed time, so a
+  sleep executed the wrong number of times passes everything. `check --interval`
+  slept `2n-1` times instead of `n-1` for a whole release. When touching
+  `--interval`, `--timeout` or `--total-timeout`, *measure*: compare
+  `Measure-Command` against the arithmetic you expect. A directional check
+  ("time passed") would have missed it; only a numeric prediction caught it.
+- **Documentation drift.** Nothing checks that `README.md` mentions a new flag.
+  Both directions of an automated check need an allowlist — the README contains
+  `jq`, `cargo` and `tar` flags too — which would cost more than it catches. So
+  it is a manual step: after adding a flag, grep the README for it before
+  calling the work done. Four slices shipped undocumented because this was
+  scheduled as a final task instead of per-slice.
+- **Whether the binary starts.** `cargo test` never used to exec the binary, so
+  a parse-time stack overflow left 233 unit tests green while `--version` died.
+  `tests/cli_smoke.rs` now covers this; keep it passing and extend the
+  subcommand list when adding commands.
+
+**Before claiming a regression, check the last release.** When a measurement
+looks wrong mid-change, run the same command against a released binary — a
+prebuilt one usually sits under `dist/` after packaging. The `--interval` timing
+above reproduced identically on 0.6.0, which settled in seconds whether it was
+newly broken or long-standing. Guessing here wastes a debugging session or,
+worse, attributes someone else's bug to your change.
+
+
 
 ## The two repositories
 
@@ -88,6 +131,16 @@ record a decision and the failure that motivated it — e.g. why `plugin` gets i
 own clap parser (Windows 1 MB stack overflow on clap's recursive command-tree
 walk, `src/main.rs:346-351`), or why the crates.io publish check uses the sparse
 index instead of `cargo info`. Match that. Do not narrate the code.
+
+**Fix the mechanism the second time, not the third.** The stack overflow above
+was dodged twice at the symptom site — splitting the `plugin` parser in 0.3.17,
+moving `completions`/`man` to a bigger-stack thread in 0.5.0 — and each dodge
+silently kept consuming the same budget while looking, in the changelog, like a
+resolution. The third occurrence killed every invocation including `--version`.
+Test for whether a fix is a fix: **after it lands, does the next person adding a
+feature still need to know about this?** If yes, it is a deferral. Say so in the
+commit rather than recording it as fixed.
+
 
 **Commit messages.** Imperative subject under ~70 chars, then a body explaining
 *why* the change was needed — what was broken, what it would have caused. No
