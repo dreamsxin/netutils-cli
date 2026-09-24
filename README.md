@@ -521,9 +521,12 @@ Batch JSON is a distinct shape from the single-target output, which is unchanged
   "started_at": "2026-09-23T07:54:29.412Z",
   "finished_at": "2026-09-23T07:55:01.008Z",
   "stats": { "targets": 3, "succeeded": 2, "failed": 1 },
+  "interrupted": false,
   "results": [ "…one single-target object per list entry…" ]
 }
 ```
+
+`interrupted` is `true` when Ctrl-C stopped the sweep early, in which case `results` only covers the targets that were dispatched.
 
 `results` follows the **list order** even when `--parallel` finished the work out of order, so a diff against yesterday's run lines up row by row.
 
