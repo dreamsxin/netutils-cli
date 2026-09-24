@@ -16,6 +16,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// 行分隔 JSON：一条记录一行，完成即输出，可直接管进日志采集（隐含 --json）
+    #[arg(long, global = true)]
+    pub ndjson: bool,
+
     /// 覆盖语言（zh/en），默认自动检测
     #[arg(long, global = true, value_enum)]
     pub lang: Option<Lang>,
@@ -500,6 +504,10 @@ pub struct PluginCli {
     /// JSON 输出（便于脚本处理）
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// 行分隔 JSON：一条记录一行，完成即输出，可直接管进日志采集（隐含 --json）
+    #[arg(long, global = true)]
+    pub ndjson: bool,
 
     /// 覆盖语言（zh/en），默认自动检测
     #[arg(long, global = true, value_enum)]

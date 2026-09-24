@@ -1,9 +1,17 @@
 //! 输出模式：表格（默认）或 JSON。
 
 use serde::Serialize;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 static EXIT_CODE: AtomicU8 = AtomicU8::new(0);
+
+/// 是否输出行分隔 JSON（NDJSON）。
+///
+/// 刻意**不**做成 `OutputMode` 的第三个变体：全仓有大量 `mode == OutputMode::Json`
+/// 形态的判断，加变体会让这些分支把 NDJSON 当表格处理，是一类必然发生又难以穷举
+/// 的静默漏判。作为正交开关后，既有 `== Json` 判断自动保持正确（NDJSON 本身就是
+/// JSON），只有需要区分「逐行还是末尾一坨」的地方才查这里。
+static STREAMING: AtomicBool = AtomicBool::new(false);
 
 /// 输出模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,9 +28,31 @@ struct JsonError {
     error: String,
 }
 
+pub fn set_streaming(on: bool) {
+    STREAMING.store(on, Ordering::Relaxed);
+}
+
+pub fn streaming() -> bool {
+    STREAMING.load(Ordering::Relaxed)
+}
+
 /// 渲染 JSON 输出
 pub fn print_json<T: Serialize>(data: &T) {
     match serde_json::to_string_pretty(data) {
+        Ok(s) => println!("{}", s),
+        Err(e) => {
+            mark_failure();
+            eprintln!("JSON serialization error: {}", e);
+        }
+    }
+}
+
+/// 输出一行紧凑 JSON（NDJSON）。
+///
+/// 与 [`print_json`] 的区别不只是格式：这里是「一条记录一行、立刻可被下游读取」，
+/// 长跑探测因此能边跑边入库，而不是等命令结束才吐一坨。
+pub fn print_json_line<T: Serialize>(data: &T) {
+    match serde_json::to_string(data) {
         Ok(s) => println!("{}", s),
         Err(e) => {
             mark_failure();

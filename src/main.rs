@@ -71,7 +71,7 @@ async fn run() -> anyhow::Result<()> {
     if let Some(plugin_pos) = plugin_command_position(&raw_args) {
         let cli = PluginCli::parse_from(plugin_parse_args(&raw_args, plugin_pos));
         i18n::init(cli.lang);
-        let mode = output_mode(cli.json);
+        let mode = output_mode(cli.json, cli.ndjson);
         color::init(cli.color, mode);
         run_plugin_command(cli.command, mode);
         output::exit_if_failed();
@@ -84,7 +84,7 @@ async fn run() -> anyhow::Result<()> {
     i18n::init(cli.lang);
 
     // 确定输出模式
-    let mode = output_mode(cli.json);
+    let mode = output_mode(cli.json, cli.ndjson);
     color::init(cli.color, mode);
     let total_timeout = cli.total_timeout;
 
@@ -430,8 +430,11 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn output_mode(json: bool) -> OutputMode {
-    if json {
+/// NDJSON 隐含 JSON：它本身就是 JSON，只是逐行输出，因此不必强迫用户同时传两个
+/// 开关；两个都传时也不报错。
+fn output_mode(json: bool, ndjson: bool) -> OutputMode {
+    output::set_streaming(ndjson);
+    if json || ndjson {
         OutputMode::Json
     } else {
         OutputMode::Table
@@ -487,8 +490,9 @@ fn parse_assertions(raw: &[String], mode: OutputMode) -> Option<Vec<assertion::A
 
 /// 全局开关表：值为该开关连带消耗的参数个数（含开关自身）。
 /// `plugin` 子命令走独立解析器，因此必须在这里手工跳过全局开关。
-const GLOBAL_FLAGS: [(&str, usize); 4] = [
+const GLOBAL_FLAGS: [(&str, usize); 5] = [
     ("--json", 1),
+    ("--ndjson", 1),
     ("--lang", 2),
     ("--color", 2),
     ("--total-timeout", 2),

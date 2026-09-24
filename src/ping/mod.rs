@@ -127,7 +127,7 @@ pub async fn run(host: &str, count: u32, timeout: Duration, interval: Duration, 
             OutputMode::Table => print_ping_line(host, &probe),
             // 持续模式下单个 JSON 对象永远不会结束，因此按 NDJSON 逐行输出。
             // 有界模式保持原来的「末尾单个 JSON 对象」契约不变。
-            OutputMode::Json if continuous => print_json_line(&probe),
+            OutputMode::Json if continuous => crate::output::print_json_line(&probe),
             OutputMode::Json => {}
         }
         probes.push(probe);
@@ -176,14 +176,6 @@ async fn sleep_or_interrupt(interval: Duration, continuous: bool) -> bool {
         _ = tokio::time::sleep(interval) => false,
         // Ctrl-C 时正常收尾并打印统计，而不是让进程被直接杀掉、丢掉已采集的数据。
         _ = tokio::signal::ctrl_c() => true,
-    }
-}
-
-/// 输出一行 NDJSON。
-fn print_json_line(probe: &ProbeResult) {
-    match serde_json::to_string(probe) {
-        Ok(line) => println!("{line}"),
-        Err(err) => eprintln!("failed to serialize probe: {err}"),
     }
 }
 

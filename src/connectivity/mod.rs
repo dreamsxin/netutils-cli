@@ -75,6 +75,29 @@ pub struct BatchStats {
     pub failed: usize,
 }
 
+/// NDJSON 的一条记录。
+///
+/// `record` 让消费方能区分「目标汇总」与「整批汇总」；取值集合刻意做成通用的
+/// （`probe` / `summary` / `batch_summary` / `error`），后续命令接入时不必再扩。
+#[derive(Serialize)]
+struct Line<'a, T: Serialize> {
+    record: &'static str,
+    #[serde(flatten)]
+    body: &'a T,
+}
+
+fn emit_line<T: Serialize>(record: &'static str, body: &T) {
+    crate::output::print_json_line(&Line { record, body });
+}
+
+/// 流式模式下的整批收尾行：每行都要能独立解读，所以自带时刻。
+#[derive(Serialize)]
+struct BatchTail<'a> {
+    ts: String,
+    stats: &'a BatchStats,
+    interrupted: bool,
+}
+
 #[derive(Serialize, Clone)]
 pub struct CheckStats {
     pub total: usize,
@@ -192,6 +215,8 @@ pub async fn run_batch(
                 if mode == OutputMode::Table {
                     let seq = done.fetch_add(1, Ordering::Relaxed) + 1;
                     print_progress_line(seq, total, &output);
+                } else if crate::output::streaming() {
+                    emit_line("summary", &output);
                 }
                 output
             }
@@ -228,6 +253,9 @@ pub async fn run_batch(
                     Some(msg) => println!("  {}", msg.red()),
                     None => render(&output, mode, concurrency),
                 }
+            } else if crate::output::streaming() {
+                // 目标完成即出一行，不等整批结束
+                emit_line("summary", &output);
             }
             results.push(output);
         }
@@ -250,7 +278,20 @@ pub async fn run_batch(
     };
 
     if mode == OutputMode::Json {
-        print_json(&output);
+        // 流式模式下每个目标已各出一行，这里只补整批收尾。不复用 BatchOutput：
+        // 它带着全部 results，逐行输出的意义就没了。
+        if crate::output::streaming() {
+            emit_line(
+                "batch_summary",
+                &BatchTail {
+                    ts: output.finished_at.clone(),
+                    stats: &output.stats,
+                    interrupted: output.interrupted,
+                },
+            );
+        } else {
+            print_json(&output);
+        }
         return;
     }
 
@@ -360,7 +401,12 @@ fn failed_output(target: &str, error: String) -> CheckOutput {
 /// 变成「全部探完再一次性刷屏」，卡在哪一步就看不出来了。
 fn render(output: &CheckOutput, mode: OutputMode, concurrency: usize) {
     if mode == OutputMode::Json {
-        print_json(output);
+        // 流式模式下汇总也走记录行，消费方按 record 区分，不必先判断是单目标还是批量
+        if crate::output::streaming() {
+            emit_line("summary", output);
+        } else {
+            print_json(output);
+        }
         return;
     }
 

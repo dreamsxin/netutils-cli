@@ -78,11 +78,16 @@
   >
   > **顺带发现一个既有 bug（非本次引入）**：`check --interval 2` 在 `--count` 为 1/2/3 时耗时 2.1s / 6.1s / 10.1s，即睡了 `2n-1` 次而应为 `n-1` 次。用 `dist/` 里已发布的 0.6.0 二进制实测得到完全相同的数字，确认是既有问题。已记入 ROADMAP，不在本 spec 范围内修。
 
-- [ ] **T7 `--ndjson`**
-  - 文件：`src/output.rs`、`src/ping/mod.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`、`src/cli.rs`、`src/main.rs`
-  - 内容：`output.rs` 增 `STREAMING: AtomicBool` 与 `set_streaming` / `streaming`（**不加 `OutputMode` 变体**，否则全仓 `== Json` 判断会静默漏判）；泛型 `print_json_line`（紧凑），`ping` 的私有同名函数删除改用之；`--ndjson` 加到 `Cli` / `PluginCli` / `GLOBAL_FLAGS` 三处；输出 `record` 为 `probe` / `summary` / `batch_summary` / `error` 的行（`scan` 用 `port` 替代 `seq`），中断时 `batch_summary` 带 `interrupted: true`
-  - 验收：`ping --count 0 --json` 逐行输出与改动前一致；每行 `jq -c .` 通过且自带 `target` 与 `ts`；`--json` 与 `--ndjson` 同给时以 NDJSON 生效不报错
+- [x] **T7 `--ndjson`（汇总行）**
+  - 文件：`src/output.rs`、`src/ping/mod.rs`、`src/connectivity/mod.rs`、`src/cli.rs`、`src/main.rs`
+  - 内容：`output.rs` 增 `STREAMING: AtomicBool` 与 `set_streaming` / `streaming`（**不加 `OutputMode` 变体**，否则全仓 `== Json` 判断会静默漏判）；泛型 `print_json_line`（紧凑），`ping` 的私有同名函数删除改用之；`--ndjson` 加到 `Cli` / `PluginCli` / `GLOBAL_FLAGS` 三处，隐含 `--json`，两个都传不报错；`check` 输出 `record` 为 `summary` / `batch_summary` 的行，`batch_summary` 自带 `ts` 与 `interrupted`
+  - 验收：`--ndjson check --targets-from` 每行 `jq -e .` 通过（3 目标 → 3 行 summary + 1 行 batch_summary，0 行非法）；`--json` 仍输出单个 pretty 对象（23 行）；`ping --count 0 --json` 逐行行为未变
   - 需求：R6 R7 R12
+
+- [ ] **T7b NDJSON 的逐次探测行**
+  - 文件：`src/connectivity/mod.rs`、`src/portscan/mod.rs`
+  - 内容：`record: "probe"` 每次探测完成即输出（`scan` 用 `port` 替代 `seq`）。T7 只做了汇总行——长跑场景下真正要"边跑边出"的是逐次行，但插入点在 `probe_tcp` 的三个分支与 `probe_http` 的两条路径内部，与逐次表格行同位置，值得单独一次改动
+  - 需求：R6
 
 - [x] **T8 文档（随切片滚动更新）**
   - 文件：`README.md`、`CHANGELOG.md`、`AGENTS.md`、`ROADMAP.md`
