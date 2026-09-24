@@ -190,6 +190,7 @@ async fn run() -> anyhow::Result<()> {
                 target,
                 targets_from,
                 parallel,
+                show_timestamp,
                 count,
                 timeout,
                 interval,
@@ -202,6 +203,7 @@ async fn run() -> anyhow::Result<()> {
                 let Some(assertions) = parse_assertions(&assertions, mode) else {
                     return;
                 };
+                output::set_show_timestamp(show_timestamp);
                 // 目标来源二选一。clap 已经拦掉「两个都给」，这里只需要覆盖
                 // 「一个都不给」，并且用 i18n 文案而不是 clap 的英文报错。
                 let targets = match (target, targets_from) {

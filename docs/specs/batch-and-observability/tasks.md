@@ -103,10 +103,13 @@
   > 2. **`CHANGELOG.md` 本来就存在**（280 行，中文，条目解释「为什么」并常带实测数据）。ROADMAP 与本文件此前都写成「新增 CHANGELOG.md」，是我没读就下的结论。已改为在既有文件前置 `[0.7.0]` 段并沿用其风格；`AGENTS.md` 的语言约定补上「CHANGELOG 用中文」。
   > 3. `--show-timestamp`（design §4、requirements R4 的表格开关）**尚未实现**，另立 T9。
 
-- [ ] **T9 `--show-timestamp`**
-  - 文件：`src/cli.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`
-  - 内容：表格模式下默认不打时间戳（避免刷屏），由该开关开启。R4 的字段部分已在 T2/T3 完成，开关部分未做
+- [x] **T9 `check --show-timestamp`**
+  - 文件：`src/output.rs`、`src/connectivity/mod.rs`、`src/cli.rs`、`src/main.rs`
+  - 内容：`output.rs` 增 `SHOW_TIMESTAMP` 开关（与 `STREAMING` 同一范式）；`check` 的逐次 TCP 行在开启时前缀 RFC 3339 时刻。默认关闭——时间戳每行占 24 字符，长跑时会把真正要看的延迟和错误挤到一边；JSON 不受影响，`ts` 字段一直都在
+  - 验收：默认输出 `  [1/1] ✗ 连接失败 …`；加 `--show-timestamp` 变成 `  2026-09-24T03:45:45.826Z [1/1] ✗ 连接失败 …`
   - 需求：R4
+
+  > **范围如实记录**：只覆盖 `check` 的 TCP 逐次行。`check` 的 HTTP 逐次行（`print_probe`）与 `scan` 表格的时间列**未做**——前者的发射点在另一个辅助函数里，后者要给表格加一列并新增 i18n 表头。R4 的字段部分（T2/T3）与 TCP 表格开关已满足，其余两处等有实际需要再补。
 
 ---
 

@@ -36,6 +36,20 @@ pub fn streaming() -> bool {
     STREAMING.load(Ordering::Relaxed)
 }
 
+/// 表格模式是否在逐次结果上显示时间戳。
+///
+/// 默认关闭：时间戳每行占 24 个字符，长跑时会把真正要看的延迟和错误挤到一边。
+/// 需要与其他日志对齐时再打开。JSON 不受影响——那边 `ts` 字段一直都在。
+static SHOW_TIMESTAMP: AtomicBool = AtomicBool::new(false);
+
+pub fn set_show_timestamp(on: bool) {
+    SHOW_TIMESTAMP.store(on, Ordering::Relaxed);
+}
+
+pub fn show_timestamp() -> bool {
+    SHOW_TIMESTAMP.load(Ordering::Relaxed)
+}
+
 /// 渲染 JSON 输出
 pub fn print_json<T: Serialize>(data: &T) {
     match serde_json::to_string_pretty(data) {

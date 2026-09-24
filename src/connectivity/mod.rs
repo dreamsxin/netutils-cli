@@ -147,6 +147,15 @@ fn live_table(mode: OutputMode) -> bool {
     mode == OutputMode::Table && LIVE_PROBES.load(Ordering::Relaxed)
 }
 
+/// 逐次行的时间戳前缀。默认为空——见 `output::show_timestamp` 的说明。
+fn ts_prefix(ts: &str) -> String {
+    if crate::output::show_timestamp() {
+        format!("{} ", ts.dimmed())
+    } else {
+        String::new()
+    }
+}
+
 /// 执行连通性测试
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -589,7 +598,8 @@ async fn probe_tcp(
             Ok(Ok(_stream)) => {
                 if live_table(mode) {
                     println!(
-                        "  {}",
+                        "  {}{}",
+                        ts_prefix(&ts),
                         t("check.tcp_ok")
                             .replace("{0}", &(i + 1).to_string())
                             .replace("{1}", &count.to_string())
@@ -609,7 +619,8 @@ async fn probe_tcp(
             Ok(Err(e)) => {
                 if live_table(mode) {
                     println!(
-                        "  {}",
+                        "  {}{}",
+                        ts_prefix(&ts),
                         t("check.tcp_fail")
                             .replace("{0}", &(i + 1).to_string())
                             .replace("{1}", &count.to_string())
@@ -629,7 +640,8 @@ async fn probe_tcp(
             Err(_) => {
                 if live_table(mode) {
                     println!(
-                        "  {}",
+                        "  {}{}",
+                        ts_prefix(&ts),
                         t("check.tcp_timeout")
                             .replace("{0}", &(i + 1).to_string())
                             .replace("{1}", &count.to_string())

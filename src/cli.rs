@@ -222,6 +222,9 @@ pub enum Commands {
         /// 逐次探测行——并发下它们会交错到不可读。与 --concurrency 正交
         #[arg(long, default_value_t = 1)]
         parallel: usize,
+        /// 表格模式下在每条探测前显示时间戳（JSON 一直都带 ts 字段）
+        #[arg(long)]
+        show_timestamp: bool,
         /// 测试次数（默认 4）
         #[arg(short, long, default_value_t = 4)]
         count: u32,

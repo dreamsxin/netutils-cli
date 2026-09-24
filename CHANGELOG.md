@@ -43,6 +43,9 @@
 - 批量 JSON 为独立的顶层结构（`mode` / `started_at` / `finished_at` / `stats` / `results`），
   仅在传清单时出现，另带 `interrupted`。
   做成独立类型而非改造单目标结构，是为了让单目标契约在结构上不可能被批量改动波及
+- `check --show-timestamp` 在表格模式的逐次行前显示 RFC 3339 时刻。默认关闭：
+  时间戳每行占 24 个字符，长跑时会把真正要看的延迟和错误挤到一边；JSON 不受影响，
+  `ts` 字段一直都在
 
 ### 修复
 - `main` 改为在显式 16 MB 栈的线程上运行整个 tokio 运行时。clap derive 构建命令树是

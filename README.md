@@ -574,6 +574,18 @@ netutils ping example.com --count 0 --json | jq -c '{ts, seq, rtt_ms}'
 
 For `scan`, the stamp is taken before the first connect attempt rather than on return — a port is retried across up to eight resolved addresses, so stamping the result would misreport when the port was first tried.
 
+Table output leaves timestamps off by default, since 24 characters per line push the latency and the error message aside. `check --show-timestamp` turns them on when output needs to be lined up against another log:
+
+```text
+  2026-09-24T03:45:45.826Z [1/4] ✓ connected  12.34ms
+```
+
+Table output leaves timestamps off by default, since 24 characters per line push the latency and the error message aside. `check --show-timestamp` turns them on when output needs to be lined up against another log:
+
+```text
+  2026-09-24T03:45:45.826Z [1/4] ✓ connected  12.34ms
+```
+
 ### CI Assertions
 
 `http` and `check` accept repeatable `--assert <EXPR>` conditions so a probe can gate a pipeline directly, without post-processing JSON:
