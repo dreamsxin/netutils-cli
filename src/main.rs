@@ -39,8 +39,30 @@ use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands, PluginCli, PluginCommands};
 use output::OutputMode;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Windows 主线程栈只有 1 MB，而 clap derive 构建命令树是递归的：命令和参数一多
+/// 就踩线，且失败方式是启动即栈溢出，连 `--version` 都跑不起来。
+///
+/// 这是同一颗地雷的第三次：0.3.17 为此把 `plugin` 拆成独立解析器，0.5.0 把
+/// `completions`/`man` 的生成挪到大栈线程。这次不再逐个躲，直接把整个运行时放到
+/// 显式给足栈的线程上——以后新增参数不必每次想起这件事。
+fn main() -> anyhow::Result<()> {
+    const STACK_SIZE: usize = 16 * 1024 * 1024;
+
+    std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build the tokio runtime")
+                .block_on(run())
+        })
+        .expect("failed to spawn the main worker thread")
+        .join()
+        .expect("the main worker thread panicked")
+}
+
+async fn run() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = env::args_os().collect();
     if let Some(args) = plugin_help_parse_args(&raw_args) {
         PluginCli::parse_from(args);
@@ -167,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
             Some(Commands::Check {
                 target,
                 targets_from,
+                parallel,
                 count,
                 timeout,
                 interval,
@@ -225,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
                         proxy,
                         no_proxy,
                         concurrency,
+                        parallel,
                         &assertions,
                         mode,
                     )

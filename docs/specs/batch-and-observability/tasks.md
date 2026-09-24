@@ -68,11 +68,15 @@
 
   > **范围拆分（实施中决定）**：`check --parallel` 另起一个切片。`scan` 的所有输出都在 `render` 里，并发只需换一层编排；而 `check` 在探测循环内部就有逐次实时行（`src/connectivity/mod.rs` 五处 `mode == OutputMode::Table` 门），并发时必须先把这些行抑制掉，否则多目标交错不可读。抑制需要一个贯穿 `probe_one` / `probe_tcp` / `probe_http` 的开关，而这三个签名已经长到要 `#[allow(clippy::too_many_arguments)]`，值得单独一次改动来做，不混在本切片里。
 
-- [ ] **T6b `check --parallel`**
-  - 文件：`src/connectivity/mod.rs`、`src/cli.rs`、`src/main.rs`
-  - 内容：复用 `batch::run_targets`；断言列表以 `Arc` 共享（`JoinSet` 要求 `'static`）；并发时抑制单目标内部的逐次行，改为每目标完成即打印一行
-  - 验收：`--parallel > 1` 时每个目标内部仍遵守 `--interval`（回归测试，`--concurrency > 1` 已有绕过 `--interval` 的先例，不能重犯）；输出随完成即时出现
+- [x] **T6b `check --parallel`**
+  - 文件：`src/connectivity/mod.rs`、`src/cli.rs`、`src/main.rs`、`src/i18n.rs`
+  - 内容：复用 `batch::run_targets`；断言列表与代理以 `Arc` 共享（`JoinSet` 要求 `'static`）；并发时通过模块级 `LIVE_PROBES` 抑制单目标内部的逐次行，改为每目标完成即打印一行；`BatchOutput` 补 `interrupted`，与 `scan` 的批量结构对齐
+  - 验收：实测 `--parallel 4` 一行一个目标、无逐次行；串行仍保留逐次行与统计表；单目标 JSON 基线一致；`--parallel` 下 `--interval` 仍在目标内部生效（并发 4 个目标的总耗时 6.1s ≈ 单目标耗时，说明目标间并发而目标内未跳过间隔）
   - 需求：R3 R9 R9b R11
+
+  > **踩到仓库的老地雷并做了根治**：加上两个 `--parallel` 后 clap derive 的命令树超过 Windows 主线程 1 MB 栈，**任何**调用（含 `--version`）启动即栈溢出。这是同一问题第三次出现（0.3.17 拆 `plugin` 解析器、0.5.0 把 `completions`/`man` 移到大栈线程）。这次不再逐点规避：`main` 改为在显式 16 MB 栈的线程上跑整个 tokio 运行时，以后新增参数不必每次想起这件事。
+  >
+  > **顺带发现一个既有 bug（非本次引入）**：`check --interval 2` 在 `--count` 为 1/2/3 时耗时 2.1s / 6.1s / 10.1s，即睡了 `2n-1` 次而应为 `n-1` 次。用 `dist/` 里已发布的 0.6.0 二进制实测得到完全相同的数字，确认是既有问题。已记入 ROADMAP，不在本 spec 范围内修。
 
 - [ ] **T7 `--ndjson`**
   - 文件：`src/output.rs`、`src/ping/mod.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`、`src/cli.rs`、`src/main.rs`

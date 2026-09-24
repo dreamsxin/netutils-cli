@@ -43,6 +43,10 @@ Also in this milestone, because it is cheap and currently misleading:
   normalizes `p95` to `p95_ms` and the module docs advertise `p95<800ms`, but no
   command ever populates percentile metrics — percentiles are computed only in
   `proxy-test` (`src/proxy_test.rs:497-499`), which has no `--assert`.
+- **`check --interval` sleeps too many times.** Measured against the released
+  0.6.0 binary, so this is not a regression: with `--interval 2`, a run takes
+  2.1s at `--count 1`, 6.1s at `2` and 10.1s at `3` — i.e. `2n-1` sleeps where
+  `n-1` are wanted. A 60-sample check costs about twice what it should.
 - **`CHANGELOG.md`** entry for the additive JSON fields, and for the breaking
   ones in 0.8.0.
 

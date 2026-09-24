@@ -1,12 +1,14 @@
 //! 连通性测试模块：TCP 端口连通性 + HTTP 请求测试。
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use colored::*;
 use serde::Serialize;
 
 use crate::assertion::{self, Assertion, AssertionReport, Metrics};
-use crate::i18n::{t, t1};
+use crate::i18n::{t, t1, t2};
 use crate::output::{print_json, print_json_error, OutputMode};
 use crate::table::print_table;
 
@@ -61,6 +63,8 @@ pub struct BatchOutput {
     pub started_at: String,
     pub finished_at: String,
     pub stats: BatchStats,
+    /// 被 Ctrl-C 打断时为 true：此时 results 只覆盖已派发的目标
+    pub interrupted: bool,
     pub results: Vec<CheckOutput>,
 }
 
@@ -79,6 +83,23 @@ pub struct CheckStats {
     pub min_ms: Option<f64>,
     pub max_ms: Option<f64>,
     pub avg_ms: Option<f64>,
+}
+
+/// 探测过程中的逐次实时输出是否开启。
+///
+/// 并发扫多个目标时必须关掉：多个目标的逐次行会交错到不可读。做成模块级状态
+/// 而不是参数，是因为它要影响 `probe_one` / `probe_tcp` / `probe_http` /
+/// `print_probe` 四处，而前三个签名已经长到要 `too_many_arguments`；这与
+/// `color::effective()` 的既有范式一致，且一条命令只有一个取值。
+static LIVE_PROBES: AtomicBool = AtomicBool::new(true);
+
+fn set_live_probes(on: bool) {
+    LIVE_PROBES.store(on, Ordering::Relaxed);
+}
+
+/// 该模式下是否应该打逐次探测行
+fn live_table(mode: OutputMode) -> bool {
+    mode == OutputMode::Table && LIVE_PROBES.load(Ordering::Relaxed)
 }
 
 /// 执行连通性测试
@@ -115,9 +136,11 @@ pub async fn run(
     }
 }
 
-/// 批量连通性测试：串行跑完清单里的每个目标。
+/// 批量连通性测试。
 ///
-/// 结果按清单顺序排列，单个目标失败不中断整批。
+/// 结果按清单顺序排列，单个目标失败不中断整批。`parallel == 1` 时串行，每个目标
+/// 的逐次探测行实时打出；`parallel > 1` 时并发，逐次行会交错到不可读，因此改为
+/// 每个目标完成即打印一行——降粒度，而不是缓冲到最后（见 spec R9）。
 #[allow(clippy::too_many_arguments)]
 pub async fn run_batch(
     targets: &[String],
@@ -128,6 +151,7 @@ pub async fn run_batch(
     proxy: Option<String>,
     no_proxy: bool,
     concurrency: usize,
+    parallel: usize,
     assertions: &[Assertion],
     mode: OutputMode,
 ) {
@@ -139,57 +163,89 @@ pub async fn run_batch(
         println!("{}", t1("check.batch_title", &total.to_string()).bold());
     }
 
-    let mut results = Vec::with_capacity(total);
-    for (i, target) in targets.iter().enumerate() {
-        // 分段标识带序号：长清单跑到一半时要能看出进行到哪个目标了
-        if mode == OutputMode::Table {
-            println!();
-            println!("  [{}/{}] {}", i + 1, total, target.bold());
-        }
+    let (results, interrupted) = if parallel > 1 {
+        // JoinSet 要求任务 'static，跨目标共享的输入因此包进 Arc
+        let shared_assertions = Arc::new(assertions.to_vec());
+        let shared_proxy = Arc::new(proxy);
+        let done = Arc::new(AtomicUsize::new(0));
+        set_live_probes(false);
 
-        let output = probe_one(
-            target,
-            count,
-            timeout,
-            interval,
-            timing,
-            proxy.clone(),
-            no_proxy,
-            concurrency,
-            assertions,
-            mode,
-        )
-        .await;
-
-        let output = match output {
-            Ok(output) => output,
-            // 目标自身不可探测也要占一个结果位，否则结果数与清单行数对不上，
-            // 消费方无法按行对齐。
-            Err(msg) => {
-                crate::output::mark_failure();
+        let run = crate::batch::run_targets(targets.to_vec(), parallel, move |_, target| {
+            let shared_assertions = shared_assertions.clone();
+            let shared_proxy = shared_proxy.clone();
+            let done = done.clone();
+            async move {
+                let result = probe_one(
+                    &target,
+                    count,
+                    timeout,
+                    interval,
+                    timing,
+                    (*shared_proxy).clone(),
+                    no_proxy,
+                    concurrency,
+                    &shared_assertions,
+                    mode,
+                )
+                .await;
+                let output = normalize(&target, result);
                 if mode == OutputMode::Table {
-                    println!("  {}", msg.red());
+                    let seq = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    print_progress_line(seq, total, &output);
                 }
-                failed_output(target, msg)
+                output
             }
-        };
+        })
+        .await;
+        set_live_probes(true);
+        (run.results, run.interrupted)
+    } else {
+        let mut results = Vec::with_capacity(total);
+        for (i, target) in targets.iter().enumerate() {
+            // 分段标识带序号：长清单跑到一半时要能看出进行到哪个目标了
+            if mode == OutputMode::Table {
+                println!();
+                println!("  [{}/{}] {}", i + 1, total, target.bold());
+            }
 
-        if mode == OutputMode::Table {
-            render(&output, mode, concurrency);
+            let result = probe_one(
+                target,
+                count,
+                timeout,
+                interval,
+                timing,
+                proxy.clone(),
+                no_proxy,
+                concurrency,
+                assertions,
+                mode,
+            )
+            .await;
+
+            let output = normalize(target, result);
+            if mode == OutputMode::Table {
+                match &output.error {
+                    Some(msg) => println!("  {}", msg.red()),
+                    None => render(&output, mode, concurrency),
+                }
+            }
+            results.push(output);
         }
-        results.push(output);
-    }
+        (results, false)
+    };
 
     let succeeded = results.iter().filter(|o| o.stats.success > 0).count();
+    let scanned = results.len();
     let output = BatchOutput {
         mode: "batch".to_string(),
         started_at,
         finished_at: crate::timestamp::now_rfc3339_millis(),
         stats: BatchStats {
-            targets: total,
+            targets: scanned,
             succeeded,
-            failed: total - succeeded,
+            failed: scanned - succeeded,
         },
+        interrupted,
         results,
     };
 
@@ -201,10 +257,43 @@ pub async fn run_batch(
     println!();
     println!(
         "  {}",
-        t1("check.batch_summary", &total.to_string())
+        t1("check.batch_summary", &scanned.to_string())
             .replace("{1}", &succeeded.to_string())
-            .replace("{2}", &(total - succeeded).to_string())
+            .replace("{2}", &(scanned - succeeded).to_string())
             .bold()
+    );
+}
+
+/// 目标自身不可探测也要占一个结果位，否则结果数与清单行数对不上，
+/// 消费方无法按行对齐。
+fn normalize(target: &str, result: Result<CheckOutput, String>) -> CheckOutput {
+    match result {
+        Ok(output) => output,
+        Err(msg) => {
+            crate::output::mark_failure();
+            failed_output(target, msg)
+        }
+    }
+}
+
+/// 并发模式下每个目标完成时的一行结果。
+fn print_progress_line(seq: usize, total: usize, output: &CheckOutput) {
+    let width = total.to_string().len();
+    let detail = match &output.error {
+        Some(msg) => msg.red().to_string(),
+        None => t2(
+            "check.batch_line",
+            &format!("{}/{}", output.stats.success, output.stats.total),
+            &format!("{:.2}ms", output.stats.avg_ms.unwrap_or(0.0)),
+        ),
+    };
+    println!(
+        "  [{:>width$}/{}] {:<28} {}",
+        seq,
+        total,
+        output.target,
+        detail,
+        width = width
     );
 }
 
@@ -430,7 +519,7 @@ async fn probe_tcp(
 
         match result {
             Ok(Ok(_stream)) => {
-                if mode == OutputMode::Table {
+                if live_table(mode) {
                     println!(
                         "  {}",
                         t("check.tcp_ok")
@@ -450,7 +539,7 @@ async fn probe_tcp(
                 });
             }
             Ok(Err(e)) => {
-                if mode == OutputMode::Table {
+                if live_table(mode) {
                     println!(
                         "  {}",
                         t("check.tcp_fail")
@@ -470,7 +559,7 @@ async fn probe_tcp(
                 });
             }
             Err(_) => {
-                if mode == OutputMode::Table {
+                if live_table(mode) {
                     println!(
                         "  {}",
                         t("check.tcp_timeout")
@@ -1036,7 +1125,7 @@ async fn run_http_timing(
         total_ms,
     };
 
-    if mode == OutputMode::Table {
+    if live_table(mode) {
         let symbol = if is_success {
             "✓".green()
         } else {

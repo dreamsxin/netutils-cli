@@ -323,6 +323,11 @@ fn build_dict() -> HashMap<&'static str, [&'static str; 2]> {
             "{0} targets, {1} succeeded, {2} failed",
         ),
         (
+            "check.batch_line",
+            "{0} 成功，均值 {1}",
+            "{0} ok, avg {1}",
+        ),
+        (
             "check.target_conflict",
             "❌ 目标与 --targets-from 不能同时指定",
             "❌ A target and --targets-from are mutually exclusive",

@@ -214,6 +214,10 @@ pub enum Commands {
         /// 从文件读取目标清单，每行一个；`-` 表示标准输入
         #[arg(long, value_name = "FILE|-", conflicts_with = "target")]
         targets_from: Option<String>,
+        /// 同时探测的目标数（默认 1）。> 1 时每个目标完成即打印一行，而不是
+        /// 逐次探测行——并发下它们会交错到不可读。与 --concurrency 正交
+        #[arg(long, default_value_t = 1)]
+        parallel: usize,
         /// 测试次数（默认 4）
         #[arg(short, long, default_value_t = 4)]
         count: u32,
