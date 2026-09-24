@@ -80,11 +80,21 @@
   - 验收：`ping --count 0 --json` 逐行输出与改动前一致；每行 `jq -c .` 通过且自带 `target` 与 `ts`；`--json` 与 `--ndjson` 同给时以 NDJSON 生效不报错
   - 需求：R6 R7 R12
 
-- [ ] **T8 文档与收尾**
-  - 文件：`README.md`、新增 `CHANGELOG.md`、`src/i18n.rs`
-  - 内容：README 增批量巡检与 NDJSON 消费示例（含 `--targets-from -` 与管道到 `jq`）；建 `CHANGELOG.md` 记录 0.7.0 的新增字段与新参数；补齐前面各切片遗留的 zh/en 字符串
-  - 验收：示例可直接复制运行；两种语言跑一遍批量命令无占位符残留；三道门全过；工作区无基线临时文件残留
+- [x] **T8 文档（随切片滚动更新）**
+  - 文件：`README.md`、`CHANGELOG.md`、`AGENTS.md`、`ROADMAP.md`
+  - 内容：README 增 `Sweeping An Inventory` 与 `Timestamps` 两节（清单格式、批量 JSON 形状、退出码、`--parallel` 的降粒度输出、`ts`/`started_at`/`finished_at`）；`CHANGELOG.md` 补 `[0.7.0] - 未发布`
+  - 验收：README 中 `--targets-from` / `-p` / `--parallel` / `ts` 均可检索到；示例可直接复制运行
   - 需求：R12
+
+  > **复核发现两处文档滞后与一处事实错误**（已修）：
+  > 1. README 在 T3–T6 四个切片期间零更新——`--targets-from`、`-p/--ports`、`--parallel`、`ts` 全部检索不到。文档改为随切片滚动更新，不再堆到最后。
+  > 2. **`CHANGELOG.md` 本来就存在**（280 行，中文，条目解释「为什么」并常带实测数据）。ROADMAP 与本文件此前都写成「新增 CHANGELOG.md」，是我没读就下的结论。已改为在既有文件前置 `[0.7.0]` 段并沿用其风格；`AGENTS.md` 的语言约定补上「CHANGELOG 用中文」。
+  > 3. `--show-timestamp`（design §4、requirements R4 的表格开关）**尚未实现**，另立 T9。
+
+- [ ] **T9 `--show-timestamp`**
+  - 文件：`src/cli.rs`、`src/connectivity/mod.rs`、`src/portscan/mod.rs`
+  - 内容：表格模式下默认不打时间戳（避免刷屏），由该开关开启。R4 的字段部分已在 T2/T3 完成，开关部分未做
+  - 需求：R4
 
 ---
 

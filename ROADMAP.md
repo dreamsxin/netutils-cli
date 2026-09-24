@@ -43,8 +43,8 @@ Also in this milestone, because it is cheap and currently misleading:
   normalizes `p95` to `p95_ms` and the module docs advertise `p95<800ms`, but no
   command ever populates percentile metrics — percentiles are computed only in
   `proxy-test` (`src/proxy_test.rs:497-499`), which has no `--assert`.
-- **`CHANGELOG.md`**, needed before the first release with breaking JSON
-  changes.
+- **`CHANGELOG.md`** entry for the additive JSON fields, and for the breaking
+  ones in 0.8.0.
 
 ## v0.8.0 — Verdict quality
 

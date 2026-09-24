@@ -78,7 +78,10 @@ plugin once.
 ## Conventions
 
 **Language.** Code comments and spec documents in Chinese. `README.md`,
-`ROADMAP.md`, this file, and commit messages in English.
+`ROADMAP.md`, this file, and commit messages in English. **`CHANGELOG.md` is in
+Chinese** — it predates the rest and its entries explain *why* a change was
+needed, often with the measurement that motivated it; match that style rather
+than writing terse bullets.
 
 **Comments explain why, not what.** The valuable comments in this codebase
 record a decision and the failure that motivated it — e.g. why `plugin` gets its

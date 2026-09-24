@@ -480,6 +480,77 @@ The verdict distinguishes two very different failures:
 
 Proxied traffic is out of scope: the proxy establishes its own path to the target, which the local host cannot probe.
 
+### Sweeping An Inventory
+
+`check` and `scan` read a target list with `--targets-from <FILE>`, or from stdin with `-`, so a sweep does not need a shell loop and the results come back as one document:
+
+```bash
+# One target per line
+netutils check --targets-from endpoints.txt
+
+# From stdin
+grep -v '^#' hosts.txt | netutils scan --targets-from - -p 22,80,443
+
+# Scan 16 hosts at a time
+netutils scan --targets-from hosts.txt -p 443 --parallel 16
+```
+
+The list format is deliberately forgiving, since these files are usually hand-maintained: whole-line `#` comments, blank lines, CRLF endings and a leading UTF-8 BOM are all tolerated. A `#` inside a target is **not** treated as a comment. Order is preserved and duplicates are kept — sampling the same target twice is a legitimate request.
+
+`scan` takes ports either positionally or as `-p/--ports <LIST>`. In batch mode you must use the flag: `HOST` is optional there, so a positional `80,443` would be consumed as the host instead.
+
+```text
+# production edge
+api.example.com:443
+web.example.com:443
+
+10.0.0.10:8080
+```
+
+A target that cannot be probed at all — a malformed `host:port`, a hostname that will not resolve — is recorded as a failed result and the sweep continues. It still occupies a slot, so the number of results always equals the number of list entries and the two can be aligned:
+
+```bash
+netutils check --targets-from endpoints.txt --json | jq '.results[] | select(.error)'
+```
+
+Batch JSON is a distinct shape from the single-target output, which is unchanged:
+
+```json
+{
+  "mode": "batch",
+  "started_at": "2026-09-23T07:54:29.412Z",
+  "finished_at": "2026-09-23T07:55:01.008Z",
+  "stats": { "targets": 3, "succeeded": 2, "failed": 1 },
+  "results": [ "…one single-target object per list entry…" ]
+}
+```
+
+`results` follows the **list order** even when `--parallel` finished the work out of order, so a diff against yesterday's run lines up row by row.
+
+Assertions are evaluated per target rather than across the sweep: an aggregate `success_rate` could mean either "within a target" or "across targets", and the caller would have no way to tell which. Any target failing its assertion exits `3`; any target failing to probe exits `1`.
+
+`--parallel` is currently available on `scan`. Above `1` the per-host table would interleave into noise, so the granularity drops instead of the output being buffered — each host prints one line the moment it finishes, carrying its name and a completion counter:
+
+```text
+🔍 Port-scan sweep: 4 hosts
+  [1/4] no-such-host.invalid    Cannot resolve host
+  [3/4] 10.0.0.12               scan complete: 1/3 open
+  [2/4] 10.0.0.11               scan complete: 2/3 open
+  [4/4] 10.0.0.13               scan complete: 0/3 open
+```
+
+Nothing is ever withheld until a sweep ends. Troubleshooting is the point of this tool, and output that arrives only at the end cannot tell you which step is stuck.
+
+### Timestamps
+
+Every probe record carries `ts`, the moment the probe was **sent**, and every run carries `started_at` / `finished_at`. All three are RFC 3339 UTC with millisecond precision, which is what makes output correlatable with switch and application logs after the fact:
+
+```bash
+netutils ping example.com --count 0 --json | jq -c '{ts, seq, rtt_ms}'
+```
+
+For `scan`, the stamp is taken before the first connect attempt rather than on return — a port is retried across up to eight resolved addresses, so stamping the result would misreport when the port was first tried.
+
 ### CI Assertions
 
 `http` and `check` accept repeatable `--assert <EXPR>` conditions so a probe can gate a pipeline directly, without post-processing JSON:
