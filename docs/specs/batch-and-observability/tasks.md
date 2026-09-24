@@ -84,10 +84,13 @@
   - 验收：`--ndjson check --targets-from` 每行 `jq -e .` 通过（3 目标 → 3 行 summary + 1 行 batch_summary，0 行非法）；`--json` 仍输出单个 pretty 对象（23 行）；`ping --count 0 --json` 逐行行为未变
   - 需求：R6 R7 R12
 
-- [ ] **T7b NDJSON 的逐次探测行**
-  - 文件：`src/connectivity/mod.rs`、`src/portscan/mod.rs`
-  - 内容：`record: "probe"` 每次探测完成即输出（`scan` 用 `port` 替代 `seq`）。T7 只做了汇总行——长跑场景下真正要"边跑边出"的是逐次行，但插入点在 `probe_tcp` 的三个分支与 `probe_http` 的两条路径内部，与逐次表格行同位置，值得单独一次改动
+- [x] **T7b NDJSON 的逐次探测行**
+  - 文件：`src/connectivity/mod.rs`
+  - 内容：`record: "probe"` 每次探测完成即输出，带 `target` 与 `seq`（`CheckProbe` 自身没有这两项，而每行必须能独立解读）。发射点放在探测循环内、间隔休眠之前——长跑时「边跑边出」正是 NDJSON 的用途，攒到最后就退化成 `--json` 了
+  - 验收：`--ndjson check 127.0.0.1:9 -c 2` 输出 2 行 `probe` + 1 行 `summary`，`seq` 为 0/1
   - 需求：R6
+
+  > `scan` 的逐端口 `probe` 行未做：端口结果在并发任务里产生，一次扫描动辄数百行，价值远低于 `check`（后者是长跑采样的主场景）。留待有实际需求时再加。
 
 - [x] **T8 文档（随切片滚动更新）**
   - 文件：`README.md`、`CHANGELOG.md`、`AGENTS.md`、`ROADMAP.md`

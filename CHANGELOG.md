@@ -31,9 +31,24 @@
   也无法作为带日期的工单证据
   - `scan` 的时间戳取自第一次 connect 之前而非返回时：一个端口会串行重试最多
     8 个候选 IP，取返回时刻会误报该端口是什么时候开始探的
+- `check --parallel <N>` 同时探测多个目标，语义与 `--concurrency`（目标内部并发）正交。
+  大于 1 时抑制单目标内部的逐次行、改为每目标完成即打印一行——并发下逐次行必然交错
+- `--ndjson` 全局开关：一条记录一行、紧凑格式、完成即输出，可直接管进日志采集。
+  此前 JSON 是 `to_string_pretty` 的单个大对象且在全部探测结束后才吐出，长跑无法边跑边入库
+  - 记录带 `record` 字段区分 `probe`（逐次探测，带 `target` 与 `seq`）、
+    `summary`（目标汇总）、`batch_summary`（整批收尾，自带 `ts` 与 `interrupted`）
+  - 隐含 `--json`，两个都传不报错
+  - 刻意**不**做成 `OutputMode` 的第三个变体：全仓大量 `mode == OutputMode::Json` 判断
+    会因此把 NDJSON 当表格处理，属于必然发生又难以穷举的静默漏判
 - 批量 JSON 为独立的顶层结构（`mode` / `started_at` / `finished_at` / `stats` / `results`），
-  仅在传清单时出现；`scan` 的批量输出另带 `interrupted`。
+  仅在传清单时出现，另带 `interrupted`。
   做成独立类型而非改造单目标结构，是为了让单目标契约在结构上不可能被批量改动波及
+
+### 修复
+- `main` 改为在显式 16 MB 栈的线程上运行整个 tokio 运行时。clap derive 构建命令树是
+  递归的，Windows 主线程栈只有 1 MB，新增两个 `--parallel` 参数后**任何**调用（含
+  `--version`）启动即栈溢出。这是同一问题第三次出现（0.3.17 拆 `plugin` 解析器、
+  0.5.0 把 `completions`/`man` 移到大栈线程），这次不再逐点规避
 
 ### 变更
 - `check` 的两处代理错误（代理不可达、代理地址无效）在 JSON 里也带上 `❌` 前缀，

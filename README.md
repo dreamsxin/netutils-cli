@@ -529,7 +529,7 @@ Batch JSON is a distinct shape from the single-target output, which is unchanged
 
 Assertions are evaluated per target rather than across the sweep: an aggregate `success_rate` could mean either "within a target" or "across targets", and the caller would have no way to tell which. Any target failing its assertion exits `3`; any target failing to probe exits `1`.
 
-`--parallel` is currently available on `scan`. Above `1` the per-host table would interleave into noise, so the granularity drops instead of the output being buffered — each host prints one line the moment it finishes, carrying its name and a completion counter:
+`--parallel` works on both `check` and `scan`. Above `1` the per-target table would interleave into noise, so the granularity drops instead of the output being buffered — each target prints one line the moment it finishes, carrying its name and a completion counter:
 
 ```text
 🔍 Port-scan sweep: 4 hosts
@@ -540,6 +540,29 @@ Assertions are evaluated per target rather than across the sweep: an aggregate `
 ```
 
 Nothing is ever withheld until a sweep ends. Troubleshooting is the point of this tool, and output that arrives only at the end cannot tell you which step is stuck.
+
+### Streaming Output
+
+`--ndjson` emits one compact JSON record per line, each written the moment it is ready, so a long run can be piped straight into log collection instead of yielding one big object at the end. It implies `--json`.
+
+```bash
+netutils --ndjson check --targets-from endpoints.txt | jq -c 'select(.record == "probe")'
+```
+
+Each line carries a `record` field so a consumer can tell them apart:
+
+- `probe` — one probe finished; carries `target`, `seq` and the probe fields
+- `summary` — one target finished; the same object `--json` would emit for it
+- `batch_summary` — the sweep finished; carries `ts`, `stats` and `interrupted`
+
+```json
+{"record":"probe","target":"127.0.0.1:9","seq":0,"ts":"…","success":false,"rtt_ms":2034.9}
+{"record":"probe","target":"127.0.0.1:9","seq":1,"ts":"…","success":false,"rtt_ms":2001.2}
+{"record":"summary","target":"127.0.0.1:9","check_type":"tcp","stats":{"total":2,"success":0}}
+{"record":"batch_summary","ts":"…","stats":{"targets":3,"succeeded":0,"failed":3},"interrupted":false}
+```
+
+Plain `--json` is unaffected and still emits a single pretty-printed object.
 
 ### Timestamps
 

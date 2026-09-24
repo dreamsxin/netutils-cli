@@ -98,6 +98,28 @@ struct BatchTail<'a> {
     interrupted: bool,
 }
 
+/// 逐次探测记录行。`CheckProbe` 自身不带目标与序号，而每行必须能独立解读，
+/// 所以在这里补上。
+#[derive(Serialize)]
+struct ProbeLine<'a> {
+    record: &'static str,
+    target: &'a str,
+    seq: u32,
+    #[serde(flatten)]
+    probe: &'a CheckProbe,
+}
+
+fn emit_probe_line(target: &str, seq: u32, probe: &CheckProbe) {
+    if crate::output::streaming() {
+        crate::output::print_json_line(&ProbeLine {
+            record: "probe",
+            target,
+            seq,
+            probe,
+        });
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct CheckStats {
     pub total: usize,
@@ -624,6 +646,12 @@ async fn probe_tcp(
                     timing: None,
                 });
             }
+        }
+
+        // 逐次记录完成即出一行。放在这里而不是渲染阶段：长跑时「边跑边出」正是
+        // NDJSON 的用途，攒到最后就退化成 --json 了。
+        if let Some(probe) = probes.last() {
+            emit_probe_line(target, i, probe);
         }
 
         if i + 1 < count {
