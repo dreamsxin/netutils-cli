@@ -220,6 +220,10 @@ jobs:
           # 目录名取自 crate 名而非 bin 名，所以 ws 包的两个 bin
           # （netutils-ws / netutils-websocket）会自动落进同一个 ws/ 目录，
           # 与 `external_command_target()` 的别名映射一致。
+          #
+          # `tr -d '\r'`：Windows runner 上的 jq 吐 CRLF，而下面按 `:` 切分不会
+          # 去掉行尾的 \r，于是文件名会变成 `netutils-xxx\r.exe` 而找不到。
+          # 这一条只在 Windows 分支上炸，Linux/macOS 看不出问题。
           entries="$(cd .plugins-src && cargo metadata --no-deps --format-version 1 | jq -r '
             .packages[]
             | select(.name | startswith("netutils-plugin-"))
@@ -227,7 +231,7 @@ jobs:
             | (.name | ltrimstr("netutils-plugin-")) as $dir
             | .targets[]
             | select(.kind | index("bin"))
-            | "\($dir):\(.name)"')"
+            | "\($dir):\(.name)"' | tr -d '\r')"
           if [ -z "$entries" ]; then
             echo "no plugin binaries derived from the plugins workspace" >&2
             exit 1
