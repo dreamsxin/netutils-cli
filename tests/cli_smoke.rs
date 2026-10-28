@@ -74,6 +74,7 @@ fn renders_help_for_every_subcommand() {
         "install",
         "plugin",
         "connections",
+        "process",
         "diag",
         "diagnose",
         "path",

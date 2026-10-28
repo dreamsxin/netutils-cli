@@ -323,6 +323,15 @@ pub enum Commands {
         proto: Option<String>,
     },
 
+    /// 查询本机 TCP/UDP 端口对应的进程
+    Process {
+        /// 查询本地端口（不匹配远端对端端口）
+        #[arg(long)]
+        port: Option<u16>,
+        #[command(subcommand)]
+        action: Option<ProcessAction>,
+    },
+
     /// 一键诊断（组合检测，给出结论）
     #[command(alias = "dx")]
     Diag,
@@ -423,6 +432,18 @@ pub enum Commands {
     /// 外部插件命令，例如 netutils mcp ...
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProcessAction {
+    /// 向指定进程发送终止信号
+    Kill {
+        /// 目标进程 PID
+        pid: u32,
+        /// 明确确认结束进程；用于脚本和非交互终端
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn parse_positive_u32(value: &str) -> Result<u32, String> {

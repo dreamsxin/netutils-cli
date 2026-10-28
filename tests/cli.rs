@@ -34,6 +34,98 @@ fn help_lists_core_commands() {
 }
 
 #[test]
+fn process_help_documents_local_port_lookup() {
+    let output = netutils(&["process", "--help"]);
+
+    assert!(output.status.success());
+    assert!(
+        stdout(&output).contains("--port"),
+        "process help should document the local port filter: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn process_kill_help_documents_explicit_confirmation() {
+    let output = netutils(&["process", "kill", "--help"]);
+
+    assert!(output.status.success());
+    assert!(
+        stdout(&output).contains("--yes"),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn process_requires_a_port() {
+    let output = netutils(&["process"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stderr(&output).contains("Specify --port"),
+        "stderr: {}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn process_missing_port_is_a_json_usage_error() {
+    let output = netutils(&["--json", "process"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("usage error should be valid JSON");
+    assert!(parsed["error"].is_string());
+}
+
+#[test]
+fn process_kill_json_requires_confirmation_without_waiting() {
+    let output = netutils(&["--json", "process", "kill", "999999"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("kill result should be valid JSON");
+    assert_eq!(parsed["status"], "confirmation_required");
+    assert_eq!(parsed["error_code"], "confirmation_required");
+}
+
+#[test]
+fn process_kill_table_mode_requires_confirmation_without_interactive_input() {
+    let output = netutils(&["process", "kill", "999999"]);
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        stdout(&output).contains("requires --yes"),
+        "stdout: {}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn process_kill_rejects_pid_zero_before_termination() {
+    let output = netutils(&["--json", "process", "kill", "0", "--yes"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("kill result should be valid JSON");
+    assert_eq!(parsed["status"], "failed");
+    assert_eq!(parsed["error_code"], "invalid_pid");
+}
+
+#[test]
+fn process_lookup_and_kill_are_mutually_exclusive() {
+    let output = netutils(&[
+        "--json", "process", "--port", "8080", "kill", "1234", "--yes",
+    ]);
+
+    assert_eq!(output.status.code(), Some(2));
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("usage error should be valid JSON");
+    assert!(parsed["error"].is_string());
+}
+
+#[test]
 fn version_flag_prints_version() {
     let output = netutils(&["--version"]);
 

@@ -23,6 +23,7 @@ mod path;
 mod ping;
 mod plugin;
 mod portscan;
+mod process;
 mod proxy_test;
 mod route_get;
 mod route_probe;
@@ -320,6 +321,7 @@ async fn run() -> anyhow::Result<()> {
                 };
                 connections::run(filter, mode)
             }
+            Some(Commands::Process { port, action }) => process::run(port, action, mode),
             Some(Commands::Diag) => diag::run(mode).await,
             Some(Commands::Diagnose { host }) => diagnose::run(&host, mode).await,
             Some(Commands::Path {

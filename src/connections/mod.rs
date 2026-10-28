@@ -20,6 +20,23 @@ pub struct ConnectionInfo {
     pub is_proxy: bool,
 }
 
+/// 连接采集阶段可以保留已读到的记录，同时报告部分读取问题。
+#[derive(Debug, Clone)]
+pub struct ConnectionReadIssue {
+    pub code: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectionSnapshot {
+    pub connections: Vec<ConnectionInfo>,
+    pub issue: Option<ConnectionReadIssue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectionReadError {
+    pub code: &'static str,
+}
+
 /// 连接列表完整输出
 #[derive(Serialize)]
 pub struct ConnectionsOutput {
@@ -41,12 +58,17 @@ pub struct ConnFilter {
 #[cfg(target_os = "windows")]
 mod conn_win;
 #[cfg(target_os = "windows")]
-use conn_win::get_connections;
+use conn_win::{collect_connections as collect_platform, get_connections};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod conn_unix;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use conn_unix::get_connections;
+use conn_unix::{collect_connections as collect_platform, get_connections};
+
+/// 获取连接及采集完整性，供端口进程查询使用。
+pub fn collect_connections(port: u16) -> Result<ConnectionSnapshot, ConnectionReadError> {
+    collect_platform(port)
+}
 
 // ---------------------------------------------------------------------------
 // 以下解析函数与平台无关，始终编译，便于在任意平台编写单元测试。

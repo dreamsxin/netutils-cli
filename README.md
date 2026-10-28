@@ -36,11 +36,25 @@ A cross-platform command-line network diagnostic tool written in Rust. Covers ne
 | `socks-probe` | Plugin command: SOCKS5 protocol-level probe (method negotiation, RFC 1929 auth, optional CONNECT) | `netutils install socks-probe && netutils socks-probe 127.0.0.1:1080` |
 | `chrome-proxy` | Plugin command: launch Chrome through a local chained proxy bridge | `netutils install chrome-proxy && netutils chrome-proxy https://www.google.com/generate_204 --proxy socks5://127.0.0.1:7890` |
 | `connections` | Network connections (TCP/UDP) | `netutils connections --state LISTEN` |
+| `process` | Find local TCP/UDP processes by port | `netutils process --port 8080` |
 | `diag` | One-click diagnostics | `netutils diag` |
 | `diagnose` | Full-link diagnostics (DNS→Ping→TCP→HTTPS→Trace) | `netutils diagnose example.com` |
 | `path` | HTTP request path analysis (DNS→proxy/egress→Trace→TCP/TLS/HTTP) | `netutils path https://myip.ipipv.com` |
 | `completions` | Generate a shell completion script | `netutils completions bash > netutils.bash` |
 | `man` | Generate a roff man page on stdout | `netutils man > netutils.1` |
+
+### Find Processes by Port
+
+Query local TCP and UDP endpoints by their local port. The lookup does not match a remote peer port:
+
+```bash
+netutils process --port 8080
+netutils --json process --port 8080
+netutils process kill 1234
+netutils --json process kill 1234 --yes
+```
+
+The result groups endpoints by PID and reports partial or unavailable process information separately from a port with no matching endpoint. `process kill` targets one PID and asks for confirmation in an interactive terminal. JSON and non-interactive use require `--yes`; without it the command returns immediately without terminating the process.
 
 ### Installation
 
